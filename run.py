@@ -82,6 +82,7 @@ if __name__ == '__main__':
 			t1 = time()
 
 			boundingbox = map(int, boundingbox)
+			boundingbox = list(boundingbox)
 			cv2.rectangle(frame,(boundingbox[0],boundingbox[1]), (boundingbox[0]+boundingbox[2],boundingbox[1]+boundingbox[3]), (0,255,255), 1)
 			
 			duration = 0.8*duration + 0.2*(t1-t0)
