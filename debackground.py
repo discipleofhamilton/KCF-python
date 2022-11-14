@@ -5,6 +5,7 @@ import numpy as np
 import time
 import numba as nb
 import sys
+from sklearn.neighbors import KDTree
 
 
 # SIZE = np.array([16 ,12])
@@ -14,6 +15,13 @@ import sys
 # COLOR_NAMES = np.array([[255,0,0], [255,255,0], [0,255,0], [0,255,255], [0,0,255], [255,0,255],
 #                         [128,0,0], [128,128,0], [0,128,0], [0,128,128], [0,0,128], [128,0,128],
 #                         [0,0,0], [128,128,128], [192,192,192], [255,255,255]]) / 255
+
+# Salient color names
+color_names = np.array([[255,0,0], [255,255,0], [0,255,0], [0,255,255], [0,0,255], [255,0,255],
+                        [128,0,0], [128,128,0], [0,128,0], [0,128,128], [0,0,128], [128,0,128],
+                        [0,0,0], [128,128,128], [192,192,192], [255,255,255]], dtype=np.float32) / 255
+
+colornames_tree = KDTree(color_names, leaf_size=2)
 
 
 @nb.jit(nopython=True)
@@ -25,22 +33,20 @@ def get_Euclideandist(point1: np.ndarray, point2:np.ndarray) -> float:
 @nb.jit(nopython=True)
 def find_similiar_colorname(cell: np.ndarray) -> np.ndarray:
 
-    # Salient color names
-    color_names = np.array([[255,0,0], [255,255,0], [0,255,0], [0,255,255], [0,0,255], [255,0,255],
-                            [128,0,0], [128,128,0], [0,128,0], [0,128,128], [0,0,128], [128,0,128],
-                            [0,0,0], [128,128,128], [192,192,192], [255,255,255]], dtype=np.float32) / 255
+    global color_names
+    # global colornames_tree
 
     # Brute-force
     min_dist = sys.maxsize
     index    = -1
 
-    for i in range(len(color_names)):
+    # Get mean color of the cell
+    mean_cell = np.zeros(3, dtype=np.float32)
+    mean_cell[0] = np.mean(cell[:,:,0])
+    mean_cell[1] = np.mean(cell[:,:,1])
+    mean_cell[2] = np.mean(cell[:,:,2])
 
-        # Get mean color of the cell
-        mean_cell = np.zeros(3, dtype=np.float32)
-        mean_cell[0] = np.mean(cell[:,:,0])
-        mean_cell[1] = np.mean(cell[:,:,1])
-        mean_cell[2] = np.mean(cell[:,:,2])
+    for i in range(len(color_names)):
 
         # Get the distance of the salient color name and cell
         # New optimaztion for using numba optimizer
@@ -74,7 +80,7 @@ def get_mask(output_size: np.ndarray, image: np.ndarray):
     for ch in range(cell_h, h+1, cell_h):
         for cw in range(cell_w, w+1, cell_w):
 
-            cell = image[ch-cell_h:ch, cw-cell_w:cw,:].copy()
+            cell = image[ch-cell_h:ch, cw-cell_w:cw,:]
             mask[ch-cell_h:ch, cw-cell_w:cw,:] = find_similiar_colorname(cell=cell)
 
     return mask
@@ -85,7 +91,20 @@ def connect_background(mask: np.ndarray) -> np.ndarray:
     h, w, c = mask.shape
 
 
+def show_colornames(cn_unit: int = 100):
+
+    cn = np.zeros((cn_unit, 16*cn_unit, 3))
+
+    for i in range(color_names.shape[0]):
+        cn[:,i*cn_unit:(i+1)*cn_unit,:] = color_names[i]
+
+    cv2.imshow("color names", cn)
+
+
 if __name__ == '__main__':
+
+    # Show color names
+    # show_colornames()
 
     '''
     Version conflict: the original camera capture is not working
