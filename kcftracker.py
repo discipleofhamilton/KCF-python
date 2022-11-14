@@ -3,7 +3,9 @@ import cv2
 
 import fhog
 
-from debackground import get_mask, COLOR_NAMES, SIZE
+from debackground import get_mask, connect_background
+
+size = np.array([40 ,30])
 
 # ffttools
 def fftd(img, backwards=False):	
@@ -76,7 +78,7 @@ def getBorder(original, limited):
 	return res
 
 def subwindow(img, window, borderType=cv2.BORDER_CONSTANT):
-	cutWindow = [x for x in window]
+	cutWindow = [int(x) for x in window]
 	limit(cutWindow, [0,0,img.shape[1],img.shape[0]])   # modify cutWindow
 	assert(cutWindow[2]>0 and cutWindow[3]>0)
 	border = getBorder(window, cutWindow)
@@ -84,8 +86,14 @@ def subwindow(img, window, borderType=cv2.BORDER_CONSTANT):
 
 	# # debackground
 	# res_norm = res / 255
-	# mask = get_mask(output_size=SIZE, image=res_norm, color_names=COLOR_NAMES)
-	# res = cv2.bitwise_and(mask, res_norm)
+	# mask = get_mask(output_size=size, image=res_norm)
+
+	# mask = connect_background(mask)
+	# mask = cv2.resize(mask, (res.shape[1], res.shape[0]), interpolation=cv2.INTER_AREA)
+
+	# res = cv2.bitwise_and(res_norm, res_norm, mask=mask.astype('uint8'))
+
+	# cv2.imshow('crop', res)
 
 	if(border != [0,0,0,0]):
 		res = cv2.copyMakeBorder(res, border[1], border[3], border[0], border[2], borderType)
