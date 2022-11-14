@@ -49,6 +49,7 @@ def find_similiar_colorname(cell: np.ndarray) -> np.ndarray:
 
     return color_names[index]
 
+
 @nb.jit(nopython=True)
 def get_mask(output_size: np.ndarray, image: np.ndarray):
 
@@ -60,7 +61,7 @@ def get_mask(output_size: np.ndarray, image: np.ndarray):
     out_h, out_w = output_size # number of cells on image height, number of cells on image width
     h, w, c      = image.shape
 
-    mask = np.zeros((out_h, out_w, c))
+    cells = np.zeros((out_h, out_w, c))
 
     cell_h = h // out_h
     cell_w = w // out_w
@@ -72,14 +73,54 @@ def get_mask(output_size: np.ndarray, image: np.ndarray):
         for cw in range(cell_w, w+1, cell_w):
 
             cell = image[ch-cell_h:ch, cw-cell_w:cw,:]
-            mask[(ch-cell_h)/cell_h:ch/cell_h,(cw-cell_w)/cell_w:cw/cell_w,:] = find_similiar_colorname(cell=cell)
+            cells[(ch-cell_h)//cell_h:ch//cell_h,(cw-cell_w)//cell_w:cw//cell_w,:] = find_similiar_colorname(cell=cell)
 
-    return mask
+    # return connect_background(cells)
+
+    return cells
 
 
-def connect_background(mask: np.ndarray) -> np.ndarray:
+# @nb.jit(nb.none(nb.float64[:,:,:]), nopython=True)
+# @nb.jit(nb.float64[:,:,:](nb.float64[:,:,:]), nopython=True)
+@nb.jit(nopython=True)
+def connect_background(colornames: np.ndarray) -> np.ndarray:
 
-    h, w, c = mask.shape
+    h, w, c = colornames.shape
+
+    background = np.zeros((h, w))
+
+    # boundary is background
+    background[0, :]   = 1
+    background[h-1, :] = 1
+    background[:, 0]   = 1
+    background[:, w-1] = 1
+
+    # filter
+    f = np.array([[0,1,0],[1,1,1],[0,1,0]])
+
+    for i in range(1, h-1):
+        for j in range(1, w-1):
+
+            # get backgrounds
+            valid_bg = np.logical_and(background[i-1:i+2, j-1:j+2], f)
+            valid_cn =colornames[i-1:i+2, j-1:j+2]
+
+            bgs = np.empty((np.sum(valid_bg), 3))
+            ind = 0
+
+            for n in range(valid_bg.shape[0]):
+                for m in range(valid_bg.shape[1]):
+                    if valid_bg[n,m]:
+                        bgs[ind] = valid_cn[n,m]
+                        ind += 1
+
+            # bgs = valid_cn[valid_bg]
+
+            for bg in bgs:
+                if np.array_equal(colornames[i,j], bg):
+                    background[i,j] = 1
+
+    return 1 - background
 
 
 def show_colornames(cn_unit: int = 100):
@@ -142,6 +183,7 @@ if __name__ == '__main__':
         end_getmask = time.time()
         exe_time = end_getmask-st_getmask
 
+        mask = connect_background(mask)
         mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
 
         if frame_counter > 1:
@@ -150,12 +192,14 @@ if __name__ == '__main__':
         print('get mask time: %.3fms' % (exe_time*1000))
 
         # Processin with mask
-        res = cv2.bitwise_and(mask, frame_norm)
+        res = cv2.bitwise_and(frame_norm, frame_norm, mask=mask.astype('uint8'))
 
         # Show image
         # cv2.imshow('video', frame)
-        concate = np.concatenate((frame_norm, mask, res), axis=1)
+        concate = np.concatenate((frame_norm, res), axis=1)
+        # mask_gray = cv2.cvtColor((mask*255).astype('uint8'), cv2.COLOR_BGR2GRAY)
         cv2.imshow('res', concate)
+        # cv2.imshow('mask_gray', mask_gray)
 
         # Press 'q', 'ESC', 'SPACE' to exit the iteration
         break_point = cv2.waitKey(1)
