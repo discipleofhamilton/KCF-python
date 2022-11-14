@@ -4,15 +4,12 @@ import numpy as np
 import time
 import numba as nb
 import sys
-from sklearn.neighbors import KDTree
 
 
 # Salient color names
 color_names = np.array([[255,0,0], [255,255,0], [0,255,0], [0,255,255], [0,0,255], [255,0,255],
                         [128,0,0], [128,128,0], [0,128,0], [0,128,128], [0,0,128], [128,0,128],
                         [0,0,0], [128,128,128], [192,192,192], [255,255,255]], dtype=np.float32) / 255
-
-colornames_tree = KDTree(color_names, leaf_size=2)
 
 
 @nb.jit(nopython=True)
@@ -25,7 +22,6 @@ def get_Euclideandist(point1: np.ndarray, point2:np.ndarray) -> float:
 def find_similiar_colorname(cell: np.ndarray) -> np.ndarray:
 
     global color_names
-    # global colornames_tree
 
     # Brute-force
     min_dist = sys.maxsize
@@ -176,9 +172,6 @@ if __name__ == '__main__':
 
         # Get mask
         mask = get_mask(output_size=size, image=frame_norm)
-        # print(mask.shape)
-        # mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-        # mask = cv2.threshold(mask,127,255,cv2.THRESH_BINARY)
 
         end_getmask = time.time()
         exe_time = end_getmask-st_getmask
@@ -195,11 +188,8 @@ if __name__ == '__main__':
         res = cv2.bitwise_and(frame_norm, frame_norm, mask=mask.astype('uint8'))
 
         # Show image
-        # cv2.imshow('video', frame)
         concate = np.concatenate((frame_norm, res), axis=1)
-        # mask_gray = cv2.cvtColor((mask*255).astype('uint8'), cv2.COLOR_BGR2GRAY)
         cv2.imshow('res', concate)
-        # cv2.imshow('mask_gray', mask_gray)
 
         # Press 'q', 'ESC', 'SPACE' to exit the iteration
         break_point = cv2.waitKey(1)
