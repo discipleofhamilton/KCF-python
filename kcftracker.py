@@ -3,7 +3,8 @@ import cv2
 
 import fhog
 
-from debackground import get_mask, connect_background
+from debackground import debackground
+import time
 
 size = np.array([40 ,30])
 
@@ -84,14 +85,17 @@ def subwindow(img, window, borderType=cv2.BORDER_CONSTANT):
 	border = getBorder(window, cutWindow)
 	res = img[cutWindow[1]:cutWindow[1]+cutWindow[3], cutWindow[0]:cutWindow[0]+cutWindow[2]]
 
-	# # debackground
-	# res_norm = res / 255
-	# mask = get_mask(output_size=size, image=res_norm)
+	# debackground
+	# ?: Why it takes more time than whole page?
+	global size 
 
-	# mask = connect_background(mask)
-	# mask = cv2.resize(mask, (res.shape[1], res.shape[0]), interpolation=cv2.INTER_AREA)
+	st = time.time()
 
-	# res = cv2.bitwise_and(res_norm, res_norm, mask=mask.astype('uint8'))
+	res = debackground(output_size=size, image=res)
+
+	end = time.time()
+
+	print("debackground time: %.3f" % ((end-st)*1000))
 
 	# cv2.imshow('crop', res)
 
