@@ -1,4 +1,3 @@
-from re import I
 import cv2
 import os
 import numpy as np
@@ -7,14 +6,6 @@ import numba as nb
 import sys
 from sklearn.neighbors import KDTree
 
-
-# SIZE = np.array([16 ,12])
-# # SIZE = np.array([8 ,6])
-
-# # Salient color names
-# COLOR_NAMES = np.array([[255,0,0], [255,255,0], [0,255,0], [0,255,255], [0,0,255], [255,0,255],
-#                         [128,0,0], [128,128,0], [0,128,0], [0,128,128], [0,0,128], [128,0,128],
-#                         [0,0,0], [128,128,128], [192,192,192], [255,255,255]]) / 255
 
 # Salient color names
 color_names = np.array([[255,0,0], [255,255,0], [0,255,0], [0,255,255], [0,0,255], [255,0,255],
@@ -69,7 +60,7 @@ def get_mask(output_size: np.ndarray, image: np.ndarray):
     out_h, out_w = output_size # number of cells on image height, number of cells on image width
     h, w, c      = image.shape
 
-    mask = np.zeros((h,w,c))
+    mask = np.zeros((out_h, out_w, c))
 
     cell_h = h // out_h
     cell_w = w // out_w
@@ -81,7 +72,7 @@ def get_mask(output_size: np.ndarray, image: np.ndarray):
         for cw in range(cell_w, w+1, cell_w):
 
             cell = image[ch-cell_h:ch, cw-cell_w:cw,:]
-            mask[ch-cell_h:ch, cw-cell_w:cw,:] = find_similiar_colorname(cell=cell)
+            mask[(ch-cell_h)/cell_h:ch/cell_h,(cw-cell_w)/cell_w:cw/cell_w,:] = find_similiar_colorname(cell=cell)
 
     return mask
 
@@ -150,6 +141,8 @@ if __name__ == '__main__':
 
         end_getmask = time.time()
         exe_time = end_getmask-st_getmask
+
+        mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
 
         if frame_counter > 1:
             total_exe_time += exe_time
