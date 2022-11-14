@@ -17,9 +17,9 @@ import sys
 
 
 @nb.jit(nopython=True)
-def get_dist(point1: np.ndarray, point2:np.ndarray) -> float:
+def get_Euclideandist(point1: np.ndarray, point2:np.ndarray) -> float:
 
-    return np.sqrt(np.power(np.sum(point1 - point2), 2))
+    return np.sqrt(np.sum(np.power(point1 - point2, 2)))
 
 
 @nb.jit(nopython=True)
@@ -44,7 +44,7 @@ def find_similiar_colorname(cell: np.ndarray) -> np.ndarray:
 
         # Get the distance of the salient color name and cell
         # New optimaztion for using numba optimizer
-        dist = get_dist(color_names[i], mean_cell)
+        dist = get_Euclideandist(color_names[i], mean_cell)
 
         if min_dist > dist:
             min_dist = dist
@@ -87,17 +87,16 @@ def connect_background(mask: np.ndarray) -> np.ndarray:
 
 if __name__ == '__main__':
 
-    # cap  = cv2.VideoCapture(0)
-    
     '''
     Version conflict: the original camera capture is not working
+    cap  = cv2.VideoCapture(0)
     '''
 
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
     # 8, 6
-    # size = np.array([40 ,30])
-    size = np.array([32, 24])
+    size = np.array([40 ,30])
+    # size = np.array([32, 24])
     # size = np.array([24, 18])
     # size = np.array([16 ,12])
 
