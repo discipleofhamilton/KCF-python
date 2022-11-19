@@ -112,6 +112,16 @@ def connect_background(colornames: np.ndarray) -> np.ndarray:
 
             # bgs = valid_cn[valid_bg]
 
+            '''
+            Here is a simple concept:
+            1. Get background colors from above iterations
+            2. Compare whole picture of the image. 
+               Turn any bins which has same color to the background to background.
+
+            Here comes a flaut/fraction.
+            There is no any idea of connected components, so if the object which has the same color to background
+            may be removed.
+            '''
             for bg in bgs:
                 if np.array_equal(colornames[i,j], bg):
                     background[i,j] = 1
