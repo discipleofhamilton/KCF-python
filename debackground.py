@@ -175,7 +175,8 @@ def debackground(output_size: np.ndarray, image: np.ndarray) -> np.ndarray:
     mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_AREA)
 
     # Processin with mask
-    res = cv2.bitwise_and(image_norm, image_norm, mask=mask.astype('uint8'))
+    # res = cv2.bitwise_and(image_norm, image_norm, mask=mask.astype('uint8'))
+    res = bitwise(frame_norm, mask.astype('uint8'))
 
     return res
 
