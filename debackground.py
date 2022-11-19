@@ -129,6 +129,30 @@ def connect_background(colornames: np.ndarray) -> np.ndarray:
     return 1 - background
 
 
+@nb.jit(nopython=True)
+def bitwise(img: np.ndarray, mask: np.ndarray) -> np.ndarray:
+
+    res = None
+    h, w = 0, 0
+
+    if img.ndim == 3:
+        h, w, c = img.shape
+        res = np.zeros((h, w, c))
+
+    else:
+        h, w = img.shape
+        res = np.zeros((h, w))
+        
+    # For numba optimization
+    # loop the mask to check which pixels should get through
+    for n in range(h):
+        for m in range(w):
+            if mask[n,m] == 1:
+                res[n,m] = img[n,m]
+
+    return res
+
+
 def show_colornames(cn_unit: int = 100):
 
     cn = np.zeros((cn_unit, 16*cn_unit, 3))
@@ -209,13 +233,27 @@ if __name__ == '__main__':
         end_getmask = time.time()
         exe_getmask_time = end_getmask - end_getbins
 
-        if frame_counter > 1:
-            total_exe_time += exe_getbins_time + exe_getmask_time
-
-        print('get bin time: %.3fms, get mask time: %.3fms' % (exe_getbins_time*1000, exe_getmask_time*1000))
-
         # Processin with mask
-        res = cv2.bitwise_and(frame_norm, frame_norm, mask=mask.astype('uint8'))
+        res1 = cv2.bitwise_and(frame_norm, frame_norm, mask=mask.astype('uint8'))
+        end_bitwise_cv = time.time()
+        cv_bitwise_time = end_bitwise_cv - end_getmask
+
+        res = bitwise(frame_norm, mask.astype('uint8'))
+        end_bitwise = time.time()
+
+        custom_bitwise_time = end_bitwise - end_bitwise_cv
+
+        if frame_counter > 1:
+            total_exe_time += exe_getbins_time + exe_getmask_time + custom_bitwise_time
+
+        print('get bin time: %.3fms, get mask time: %.3fms, custom bitwise time: %.3fms, opencv bitwise time: %.3fms' % 
+                (
+                    exe_getbins_time*1000, 
+                    exe_getmask_time*1000,
+                    custom_bitwise_time*1000,
+                    cv_bitwise_time*1000
+                )
+             )
 
         # Show image
         concate = np.concatenate((frame_norm, res), axis=1)
