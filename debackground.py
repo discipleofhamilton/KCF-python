@@ -69,7 +69,8 @@ def get_bins(output_size: np.ndarray, image: np.ndarray):
         for cw in range(cell_w, w+1, cell_w):
 
             cell = image[ch-cell_h:ch, cw-cell_w:cw,:]
-            cells[(ch-cell_h)//cell_h:ch//cell_h,(cw-cell_w)//cell_w:cw//cell_w,:] = find_similiar_colorname(cell=cell)
+            cells[(ch-cell_h)//cell_h:ch//cell_h,\
+                  (cw-cell_w)//cell_w:cw//cell_w,:] = find_similiar_colorname(cell=cell)
 
     # return connect_background(cells)
 
@@ -98,8 +99,12 @@ def connect_background(colornames: np.ndarray) -> np.ndarray:
        Turn the bins which has same color of the background to background.
 
     Here comes a flaut/fraction.
-    There is no any idea of connected components, so if the object which has the same color to background
-    may be removed.
+    If the bin which has the same color to background may be not found.
+    '''
+
+    # To-Do
+    '''
+    Replace the simple method with connected components algorithm.
     '''
 
     # filter
@@ -187,9 +192,10 @@ if __name__ == '__main__':
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
     # 8, 6
-    size = np.array([40 ,30])
+    # size = np.array([40 ,30])
     # size = np.array([32, 24])
     # size = np.array([24, 18])
+    size = np.array([20, 15])
     # size = np.array([16 ,12])
 
     if not cap.isOpened():
