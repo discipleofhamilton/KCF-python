@@ -91,6 +91,17 @@ def connect_background(colornames: np.ndarray) -> np.ndarray:
     background[:, 0]   = 1
     background[:, w-1] = 1
 
+    '''
+    Here is a simple concept:
+    1. Get background colors first
+    2. Compare with the near 8 bins of its color name. 
+       Turn the bins which has same color of the background to background.
+
+    Here comes a flaut/fraction.
+    There is no any idea of connected components, so if the object which has the same color to background
+    may be removed.
+    '''
+
     # filter
     f = np.array([[0,1,0],[1,1,1],[0,1,0]])
 
@@ -99,32 +110,14 @@ def connect_background(colornames: np.ndarray) -> np.ndarray:
 
             # get backgrounds
             valid_bg = np.logical_and(background[i-1:i+2, j-1:j+2], f)
-            valid_cn =colornames[i-1:i+2, j-1:j+2]
-
-            bgs = np.empty((np.sum(valid_bg), 3))
-            ind = 0
+            valid_cn = colornames[i-1:i+2, j-1:j+2]
 
             for n in range(valid_bg.shape[0]):
                 for m in range(valid_bg.shape[1]):
-                    if valid_bg[n,m]:
-                        bgs[ind] = valid_cn[n,m]
-                        ind += 1
-
-            # bgs = valid_cn[valid_bg]
-
-            '''
-            Here is a simple concept:
-            1. Get background colors from above iterations
-            2. Compare whole picture of the image. 
-               Turn any bins which has same color to the background to background.
-
-            Here comes a flaut/fraction.
-            There is no any idea of connected components, so if the object which has the same color to background
-            may be removed.
-            '''
-            for bg in bgs:
-                if np.array_equal(colornames[i,j], bg):
-                    background[i,j] = 1
+                    if valid_bg[n,m] and \
+                       np.array_equal(valid_cn[n,m], colornames[i, j]):
+                        background[i, j] = 1 
+                        break 
 
     return 1 - background
 
@@ -176,7 +169,7 @@ def debackground(output_size: np.ndarray, image: np.ndarray) -> np.ndarray:
 
     # Processin with mask
     # res = cv2.bitwise_and(image_norm, image_norm, mask=mask.astype('uint8'))
-    res = bitwise(frame_norm, mask.astype('uint8'))
+    res = bitwise(image_norm, mask.astype('uint8'))
 
     return res
 
