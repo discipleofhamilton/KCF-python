@@ -6,7 +6,8 @@ import fhog
 from debackground import debackground
 import time
 
-size = np.array([40 ,30])
+# size = np.array([40 ,30])
+size = np.array([20 ,15])
 
 # ffttools
 def fftd(img, backwards=False):	
@@ -85,19 +86,19 @@ def subwindow(img, window, borderType=cv2.BORDER_CONSTANT):
 	border = getBorder(window, cutWindow)
 	res = img[cutWindow[1]:cutWindow[1]+cutWindow[3], cutWindow[0]:cutWindow[0]+cutWindow[2]]
 
-	# # debackground
-	# # ?: Why it takes more time than whole page?
-	# global size 
+	# debackground
+	# ?: Why it takes more time than whole page?
+	global size 
 
-	# st = time.time()
+	st = time.time()
 
-	# res = debackground(output_size=size, image=res)
+	res = debackground(output_size=size, image=res)
 
-	# end = time.time()
+	end = time.time()
 
 	# print("debackground time: %.3f" % ((end-st)*1000))
 
-	# # cv2.imshow('crop', res)
+	cv2.imshow('crop', res)
 
 	if(border != [0,0,0,0]):
 		res = cv2.copyMakeBorder(res, border[1], border[3], border[0], border[2], borderType)
