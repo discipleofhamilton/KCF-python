@@ -47,11 +47,11 @@ def find_similiar_colorname(cell: np.ndarray) -> np.ndarray:
 
 
 @nb.jit(nopython=True)
-def get_bins(output_size: np.ndarray, image: np.ndarray):
+def get_grids(output_size: np.ndarray, image: np.ndarray):
 
     '''
-    The function is to split an image into small bins.
-    and get the mask by the color of each bins.
+    The function is to split an image into small grids.
+    and get the mask by the color of each grids.
     '''
 
     out_h, out_w = output_size # number of cells on image height, number of cells on image width
@@ -167,7 +167,7 @@ def debackground(output_size: np.ndarray, image: np.ndarray) -> np.ndarray:
     image_norm = image / 255
 
     # Get bins
-    bins = get_bins(output_size=output_size, image=image_norm)
+    bins = get_grids(output_size=output_size, image=image_norm)
 
     mask = connect_background(bins)
     mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_AREA)
@@ -192,10 +192,10 @@ if __name__ == '__main__':
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
     # 8, 6
-    # size = np.array([40 ,30])
+    size = np.array([40 ,30])
     # size = np.array([32, 24])
     # size = np.array([24, 18])
-    size = np.array([20, 15])
+    # size = np.array([20, 15])
     # size = np.array([16 ,12])
 
     if not cap.isOpened():
@@ -219,19 +219,19 @@ if __name__ == '__main__':
         # normalize the image
         frame_norm = frame / 255
 
-        st_getbins = time.time()
+        st_getgrids = time.time()
 
-        # Get bins
-        bins = get_bins(output_size=size, image=frame_norm)
+        # Get grids
+        grids = get_grids(output_size=size, image=frame_norm)
 
-        end_getbins = time.time()
-        exe_getbins_time = end_getbins-st_getbins
+        end_getgrids = time.time()
+        exe_getgrids_time = end_getgrids-st_getgrids
 
-        mask = connect_background(bins)
+        mask = connect_background(grids)
         mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
 
         end_getmask = time.time()
-        exe_getmask_time = end_getmask - end_getbins
+        exe_getmask_time = end_getmask - end_getgrids
 
         # Processin with mask
         res1 = cv2.bitwise_and(frame_norm, frame_norm, mask=mask.astype('uint8'))
@@ -244,11 +244,11 @@ if __name__ == '__main__':
         custom_bitwise_time = end_bitwise - end_bitwise_cv
 
         if frame_counter > 1:
-            total_exe_time += exe_getbins_time + exe_getmask_time + custom_bitwise_time
+            total_exe_time += exe_getgrids_time + exe_getmask_time + custom_bitwise_time
 
-        print('get bin time: %.3fms, get mask time: %.3fms, custom bitwise time: %.3fms, opencv bitwise time: %.3fms' % 
+        print('get grid time: %.3fms, get mask time: %.3fms, custom bitwise time: %.3fms, opencv bitwise time: %.3fms' % 
                 (
-                    exe_getbins_time*1000, 
+                    exe_getgrids_time*1000, 
                     exe_getmask_time*1000,
                     custom_bitwise_time*1000,
                     cv_bitwise_time*1000
