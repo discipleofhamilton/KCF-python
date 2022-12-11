@@ -22,7 +22,8 @@ pip3 install -r requirements.txt
 ### Use
 Download the sources and execute
 ```shell
-git clone https://github.com/uoip/KCFpy.git
+git clone git@github.com:discipleofhamilton/KCF-python.git # ssh
+git clone https://github.com/discipleofhamilton/KCF-python.git # https
 cd KCFpy
 python run.py
 ```
