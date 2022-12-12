@@ -56,27 +56,34 @@ if __name__ == '__main__':
 			inteval = 30
 	else:  assert(0), "too many arguments"
 
-	tracker = kcftracker.KCFTracker(True, True, True)  # hog, fixed_window, multiscale
+	tracker = kcftracker.KCFTracker(True, False, True)  # hog, fixed_window, multiscale
 	#if you use hog feature, there will be a short pause after you draw a first boundingbox, that is due to the use of Numba.
 
 	cv2.namedWindow('tracking')
 	cv2.setMouseCallback('tracking',draw_boundingbox)
+
+	isfirstframe = True 
 
 	while(cap.isOpened()):
 		ret, frame = cap.read()
 		if not ret:
 			break
 
-		if(selectingObject):
+		if isfirstframe:
+			cv2.imshow('tracking', frame)
+			cv2.waitKey(0)
+			isfirstframe = False
+
+		if selectingObject:
 			cv2.rectangle(frame,(ix,iy), (cx,cy), (0,255,255), 1)
-		elif(initTracking):
+		elif initTracking:
 			cv2.rectangle(frame,(ix,iy), (ix+w,iy+h), (0,255,255), 2)
 
 			tracker.init([ix,iy,w,h], frame)
 
 			initTracking = False
 			onTracking = True
-		elif(onTracking):
+		elif onTracking:
 			t0 = time()
 			boundingbox = tracker.update(frame)
 			t1 = time()
