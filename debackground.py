@@ -163,18 +163,34 @@ def show_colornames(cn_unit: int = 100):
 
 def debackground(output_size: np.ndarray, image: np.ndarray) -> np.ndarray:
 
+    '''
+    In experimental, the get_grids() and bitwise() are the most 2 of time consuming method 
+    
+    To Do:
+    Try to accelerate get_grids() & bitwise()
+    '''
+
     # normalize the image
     image_norm = image / 255
 
+    # t0 = time.time()
     # Get bins
     bins = get_grids(output_size=output_size, image=image_norm)
+    # t1 = time.time()
 
     mask = connect_background(bins)
+    # t2 = time.time()
     mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_AREA)
+    # t3 = time.time()
 
     # Processin with mask
     # res = cv2.bitwise_and(image_norm, image_norm, mask=mask.astype('uint8'))
     res = bitwise(image_norm, mask.astype('uint8'))
+    # t4 = time.time()
+
+    # print("get bins: {:.3f}ms, get mask: {:.3f}ms, resize mask: {:.3f}ms, get result: {:.3f}ms".format(
+    #     (t1-t0)*1000, (t2-t1)*1000, (t3-t2)*1000, (t4-t3)*1000
+    # ))
 
     return res
 
