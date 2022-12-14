@@ -168,6 +168,13 @@ def debackground(output_size: np.ndarray, image: np.ndarray) -> np.ndarray:
     
     To Do:
     Try to accelerate get_grids() & bitwise()
+
+    Here is the bitwise() accelerate method:
+    It's simple. I change the process flow.
+    The reason that bitwise() cost time is because it would calculate every pixels. 
+    Even the image is 640x480, it would takes 307200 calculation.
+    I resize the original image to fit the mask shape and then do bitwise at the scale.
+    Which is downsampling the image to decrease the calculation.
     '''
 
     # normalize the image
@@ -180,12 +187,15 @@ def debackground(output_size: np.ndarray, image: np.ndarray) -> np.ndarray:
 
     mask = connect_background(bins)
     # t2 = time.time()
-    mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_AREA)
+    # mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_AREA)
+    img_resize = cv2.resize(image_norm, (mask.shape[1], mask.shape[0]), interpolation=cv2.INTER_AREA)
     # t3 = time.time()
 
     # Processin with mask
     # res = cv2.bitwise_and(image_norm, image_norm, mask=mask.astype('uint8'))
-    res = bitwise(image_norm, mask.astype('uint8'))
+    # res = bitwise(image_norm, mask.astype('uint8'))
+    res = bitwise(img_resize, mask.astype('uint8'))
+    res = cv2.resize(res, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_AREA)
     # t4 = time.time()
 
     # print("get bins: {:.3f}ms, get mask: {:.3f}ms, resize mask: {:.3f}ms, get result: {:.3f}ms".format(
@@ -244,17 +254,20 @@ if __name__ == '__main__':
         exe_getgrids_time = end_getgrids-st_getgrids
 
         mask = connect_background(grids)
-        mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
+        # mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
+        img_resize = cv2.resize(frame_norm, (mask.shape[1], mask.shape[0]), interpolation=cv2.INTER_AREA)
 
         end_getmask = time.time()
         exe_getmask_time = end_getmask - end_getgrids
 
         # Processin with mask
-        res1 = cv2.bitwise_and(frame_norm, frame_norm, mask=mask.astype('uint8'))
+        # res1 = cv2.bitwise_and(frame_norm, frame_norm, mask=mask.astype('uint8'))
+        res1 = cv2.bitwise_and(img_resize, img_resize, mask=mask.astype('uint8'))
         end_bitwise_cv = time.time()
         cv_bitwise_time = end_bitwise_cv - end_getmask
 
-        res = bitwise(frame_norm, mask.astype('uint8'))
+        res = bitwise(img_resize, mask.astype('uint8'))
+        res = cv2.resize(res, (frame_norm.shape[1], frame_norm.shape[0]), interpolation=cv2.INTER_AREA)
         end_bitwise = time.time()
 
         custom_bitwise_time = end_bitwise - end_bitwise_cv
