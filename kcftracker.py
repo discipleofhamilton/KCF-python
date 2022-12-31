@@ -106,10 +106,11 @@ def subwindow(img, window, borderType=cv2.BORDER_CONSTANT):
 
 # KCF tracker
 class KCFTracker:
-	def __init__(self, hog=False, fixed_window=True, multiscale=False):
+	def __init__(self, hog=False, fixed_window=True, multiscale=False, pv_thres=0.2):
 		self.lambdar = 0.0001   # regularization
 		self.padding = 2.5   # extra area surrounding the target
 		self.output_sigma_factor = 0.125   # bandwidth of gaussian target
+		self.pv_thres = pv_thres # peak value threshold to stop updating on wrong object feature
 
 		if(hog):  # HOG feature
 			# VOT
@@ -321,6 +322,11 @@ class KCFTracker:
 				self._scale *= self.scale_step
 				self._roi[2] *= self.scale_step
 				self._roi[3] *= self.scale_step
+
+		# print("peak value: ", peak_value)
+		if peak_value < self.pv_thres:
+			self._roi = [0, 0, 0, 0]
+			return self._roi
 		
 		self._roi[0] = cx - self._roi[2]/2.0 + loc[0]*self.cell_size*self._scale
 		self._roi[1] = cy - self._roi[3]/2.0 + loc[1]*self.cell_size*self._scale
