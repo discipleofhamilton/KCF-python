@@ -146,7 +146,7 @@ def connect_background(colornames: np.ndarray) -> np.ndarray:
 
 def show_colornames(cn_unit: int = 100):
 
-    cn = np.zeros((cn_unit, 16*cn_unit, 3))
+    cn = np.zeros((cn_unit, color_names.shape[0]*cn_unit, 3))
 
     for i in range(color_names.shape[0]):
         cn[:,i*cn_unit:(i+1)*cn_unit,:] = color_names[i]
@@ -154,7 +154,7 @@ def show_colornames(cn_unit: int = 100):
     cv2.imshow("color names", cn)
 
 
-def debackground(output_size: np.ndarray, image: np.ndarray) -> np.ndarray:
+def debackground(output_size: np.ndarray, image: np.ndarray, show_timer: bool = False) -> np.ndarray:
 
     '''
     In experimental, the get_grids() and bitwise() are the most 2 of time consuming method 
@@ -189,16 +189,17 @@ def debackground(output_size: np.ndarray, image: np.ndarray) -> np.ndarray:
     res = cv2.resize(res, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_AREA)
     get_res_time = timer.time()
 
-    print("get bins: {:.3f}ms, get mask: {:.3f}ms, resize mask: {:.3f}ms, get result: {:.3f}ms".format(
-        get_bins_time*1000, get_mask_time*1000, get_resize_mask_time*1000, get_res_time*1000
-    ))
+    if show_timer:
+        print("get bins: {:.3f}ms, get mask: {:.3f}ms, resize mask: {:.3f}ms, get result: {:.3f}ms".format(
+            get_bins_time*1000, get_mask_time*1000, get_resize_mask_time*1000, get_res_time*1000
+        ))
 
     return res
 
 
 if __name__ == '__main__':
 
-    # Show color names
+    # # Show color names
     # show_colornames()
 
     '''
@@ -209,9 +210,9 @@ if __name__ == '__main__':
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
     # 4 x 3
-    # size = np.array([40 ,30])
+    size = np.array([40 ,30])
     # size = np.array([32, 24])
-    size = np.array([24, 18])
+    # size = np.array([24, 18])
     # size = np.array([20, 15])
     # size = np.array([16 ,12])
 
