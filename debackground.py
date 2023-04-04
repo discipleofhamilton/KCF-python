@@ -5,7 +5,8 @@ import time
 import numba as nb
 import sys
 from sklearn.neighbors import BallTree
-from utils import get_Euclideandist, bitwise, Timer
+from utils import get_Euclideandist, bitwise, Timer, get_error_info
+import argparse
 
 
 # Salient color names
@@ -197,24 +198,50 @@ def debackground(output_size: np.ndarray, image: np.ndarray, show_timer: bool = 
     return res
 
 
-if __name__ == '__main__':
+def parse_arguments():
 
-    # # Show color names
-    # show_colornames()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", type=str, default="0", 
+                        help="Input source from WebCam, images or video. Default: Camera 0.")
+    parser.add_argument("--show-colornames", action="store_true", 
+                        help="Show all the setting color names.")
+    parser.add_argument("--size", nargs="+", default=[40, 30],
+                        help="Set mosaic/mask size. Default: [40, 30]")
+    return parser.parse_args()
 
-    '''
-    Version conflict: the original camera capture is not working
-    cap  = cv2.VideoCapture(0)
-    '''
 
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+def main():
 
-    # 4 x 3
-    size = np.array([40 ,30])
-    # size = np.array([32, 24])
-    # size = np.array([24, 18])
-    # size = np.array([20, 15])
-    # size = np.array([16 ,12])
+    args = parse_arguments()
+
+    # Show color names
+    if args.show_colornames:
+        show_colornames()
+
+    # if the source is WebCam
+    # then convert the string to integer
+    source = None
+    if args.source.isdigit():
+        source = int(args.source)
+
+    else:
+        # path to the video or parent directory of the images
+        '''
+        ToDo:
+        List all the images to the source, making the VideoCapture can read the images from it 
+        '''
+        source = args.source 
+
+    cap = None
+    try:
+        cap = cv2.VideoCapture(source)
+    
+    except Exception as e:
+        get_error_info(e)
+        cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+
+    # 8, 6
+    size = np.array(args.size)
 
     if not cap.isOpened():
         print("Cannot open camera")
@@ -260,6 +287,7 @@ if __name__ == '__main__':
         get_res_time = timer.time()
 
         if frame_counter > 1:
+            # total_exe_time += exe_getgrids_time + exe_getmask_time + custom_bitwise_time
             total_exe_time += exe_getgrids_time + exe_getmask_time + cv_bitwise_time
 
         print('get grid time: %.3fms, get mask time: %.3fms, opencv bitwise time: %.3fms' % 
@@ -286,3 +314,8 @@ if __name__ == '__main__':
     cv2.destroyAllWindows()
 
     print('\ncell size: %s, mean exe time: %.3fms' % (str(size), total_exe_time*1000/(frame_counter-1)))
+
+
+if __name__ == '__main__':
+
+    main()
