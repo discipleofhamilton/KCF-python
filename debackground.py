@@ -4,6 +4,8 @@ import numpy as np
 import time
 import numba as nb
 import sys
+import argparse
+from utils import get_error_info
 
 
 # Salient color names
@@ -205,24 +207,50 @@ def debackground(output_size: np.ndarray, image: np.ndarray) -> np.ndarray:
     return res
 
 
-if __name__ == '__main__':
+def parse_arguments():
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", type=str, default="0", 
+                        help="Input source from WebCam, images or video. Default: Camera 0.")
+    parser.add_argument("--show-colornames", action="store_true", 
+                        help="Show all the setting color names.")
+    parser.add_argument("--size", nargs="+", default=[40, 30],
+                        help="Set mosaic/mask size. Default: [40, 30]")
+    return parser.parse_args()
+
+
+def main():
+
+    args = parse_arguments()
 
     # Show color names
-    # show_colornames()
+    if args.show_colornames:
+        show_colornames()
 
-    '''
-    Version conflict: the original camera capture is not working
-    cap  = cv2.VideoCapture(0)
-    '''
+    # if the source is WebCam
+    # then convert the string to integer
+    source = None
+    if args.source.isdigit():
+        source = int(args.source)
 
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    else:
+        # path to the video or parent directory of the images
+        '''
+        ToDo:
+        List all the images to the source, making the VideoCapture can read the images from it 
+        '''
+        source = args.source 
+
+    cap = None
+    try:
+        cap = cv2.VideoCapture(source)
+    
+    except Exception as e:
+        get_error_info(e)
+        cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
 
     # 8, 6
-    size = np.array([40 ,30])
-    # size = np.array([32, 24])
-    # size = np.array([24, 18])
-    # size = np.array([20, 15])
-    # size = np.array([16 ,12])
+    size = np.array(args.size)
 
     if not cap.isOpened():
         print("Cannot open camera")
@@ -273,7 +301,8 @@ if __name__ == '__main__':
         custom_bitwise_time = end_bitwise - end_bitwise_cv
 
         if frame_counter > 1:
-            total_exe_time += exe_getgrids_time + exe_getmask_time + custom_bitwise_time
+            # total_exe_time += exe_getgrids_time + exe_getmask_time + custom_bitwise_time
+            total_exe_time += exe_getgrids_time + exe_getmask_time + cv_bitwise_time
 
         print('get grid time: %.3fms, get mask time: %.3fms, custom bitwise time: %.3fms, opencv bitwise time: %.3fms' % 
                 (
@@ -299,3 +328,8 @@ if __name__ == '__main__':
     cv2.destroyAllWindows()
 
     print('\ncell size: %s, mean exe time: %.3fms' % (str(size), total_exe_time*1000/(frame_counter-1)))
+
+
+if __name__ == '__main__':
+
+    main()
