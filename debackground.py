@@ -1,7 +1,5 @@
 import cv2
-import os
 import numpy as np
-import time
 import numba as nb
 import sys
 from sklearn.neighbors import BallTree
@@ -169,6 +167,8 @@ def debackground(output_size: np.ndarray, image: np.ndarray, show_timer: bool = 
     Even the image is 640x480, it would takes 307200 calculation.
     I resize the original image to fit the mask shape and then do bitwise at the scale.
     Which is downsampling the image to decrease the calculation.
+
+    2023. 3/15 Updated: Functon bitwise() done for optimizing.
     '''
 
     # normalize the image
@@ -207,6 +207,8 @@ def parse_arguments():
                         help="Show all the setting color names.")
     parser.add_argument("--size", nargs="+", default=[40, 30],
                         help="Set mosaic/mask size. Default: [40, 30]")
+    parser.add_argument("--use-custombitwise", action="store_true", 
+                        help="Replace opencv bitwise operation with customized bitwise function.")
     return parser.parse_args()
 
 
@@ -275,27 +277,28 @@ def main():
         img_resize = cv2.resize(frame_norm, (mask.shape[1], mask.shape[0]), interpolation=cv2.INTER_AREA)
         exe_getmask_time = timer.timeslice()
 
-        # Processin with mask
-        # res1 = cv2.bitwise_and(frame_norm, frame_norm, mask=mask.astype('uint8'))
-        res1 = cv2.bitwise_and(img_resize, img_resize, mask=mask.astype('uint8'))
-        cv_bitwise_time = timer.timeslice()
+        '''
+        Processin with mask
+        Do bitwise through customized function
+        '''
+        if args.use_custombitwise:
+            res = bitwise(img_resize, mask.astype('uint8'))
+        else: # OR do bitwise through opencv library
+            res = cv2.bitwise_and(img_resize, img_resize, mask=mask.astype('uint8'))    
+            
+        bitwise_time = timer.timeslice()
 
-        res = bitwise(img_resize, mask.astype('uint8'))
-        custom_bitwise_time = timer.timeslice()
-
-        res = cv2.resize(res1, (frame_norm.shape[1], frame_norm.shape[0]), interpolation=cv2.INTER_AREA)
+        res = cv2.resize(res, (frame_norm.shape[1], frame_norm.shape[0]), interpolation=cv2.INTER_AREA)
         get_res_time = timer.time()
 
         if frame_counter > 1:
-            # total_exe_time += exe_getgrids_time + exe_getmask_time + custom_bitwise_time
-            total_exe_time += exe_getgrids_time + exe_getmask_time + cv_bitwise_time
+            total_exe_time += exe_getgrids_time + exe_getmask_time + bitwise_time
 
-        print('get grid time: %.3fms, get mask time: %.3fms, opencv bitwise time: %.3fms' % 
+        print('get grid time: %.3fms, get mask time: %.3fms, bitwise time: %.3fms' % 
                 (
                     exe_getgrids_time*1000, 
                     exe_getmask_time*1000,
-                    # custom_bitwise_time*1000,
-                    cv_bitwise_time*1000
+                    bitwise_time*1000
                 )
              )
 
