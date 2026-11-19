@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 import pytest
 
-import run
-from debackground import parse_arguments as parse_background_arguments
+from kcf_tracker import cli
+from kcf_tracker.debackground import parse_arguments as parse_background_arguments
 
 
 def test_main_tracks_frames_and_releases_capture(monkeypatch):
@@ -33,7 +33,7 @@ def test_main_tracks_frames_and_releases_capture(monkeypatch):
     monkeypatch.setattr(cv2, "waitKey", wait_key)
     monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
     monkeypatch.setattr(cv2, "putText", lambda image, text, *args: labels.append(text))
-    run.main(run.parse_arguments([]))
+    cli.main(cli.parse_arguments([]))
     capture.release.assert_called_once()
     assert len(labels) == 2
     assert all(label.startswith("FPS:") for label in labels)
@@ -45,12 +45,12 @@ def test_main_releases_unavailable_source(monkeypatch):
     monkeypatch.setattr(cv2, "VideoCapture", lambda source: capture)
     monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
     with pytest.raises(RuntimeError, match="Cannot open source"):
-        run.main(run.parse_arguments(["--source", "missing.avi"]))
+        cli.main(cli.parse_arguments(["--source", "missing.avi"]))
     capture.release.assert_called_once()
 
 
 def test_selection_supports_reverse_drag_and_repositioning():
-    selection = run.Selection()
+    selection = cli.Selection()
     selection.draw_boundingbox(cv2.EVENT_LBUTTONDOWN, 70, 60, 0, None)
     selection.draw_boundingbox(cv2.EVENT_LBUTTONUP, 20, 10, 0, None)
     assert selection.roi == [20, 10, 50, 50]

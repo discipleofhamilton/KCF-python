@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from kcftracker import KCFTracker
+from kcf_tracker.tracker import KCFTracker
 
 
 @pytest.mark.parametrize("hog", [False, True])

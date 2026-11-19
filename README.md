@@ -28,8 +28,7 @@ uv run --locked pre-commit install
 不要在同一環境混裝其他 OpenCV 發行套件。Linux 執行環境可能另需 `libgl1`、`libglib2.0-0` 及可用的圖形介面。
 攝影機亦需作業系統授權。第一次使用 HOG／背景去除時，Numba 編譯可能造成短暫停頓。
 
-`requirements.txt` 僅保留 `-e .` 相容入口；依賴宣告仍以 `pyproject.toml` 為準。
-團隊重建環境應使用 uv lock 流程，`pip install -r requirements.txt` 不會重現 lock 的精確版本。
+依賴宣告以 `pyproject.toml` 為準，以 `uv.lock` 重建環境。
 
 ## 使用
 
@@ -41,10 +40,10 @@ uv run --locked kcf-track
 uv run --locked kcf-track --source 2 --use-hog --multiscale
 
 # 影片與背景去除
-uv run --locked kcf-track --source ./test.avi --use-hog --use-debackground
+uv run --locked kcf-track --source samples/videos/big_buck_bunny_20s.mp4 --use-hog --use-debackground
 
-# 仍可直接執行既有入口
-uv run --locked python run.py --source ./test.avi
+# 也可透過套件入口執行
+uv run --locked python -m kcf_tracker --source samples/videos/sintel_20s.mp4
 ```
 
 操作：第一幀暫停，左鍵拖曳框選目標後，按任意鍵開始播放；`q`／`Esc` 直接離開。
@@ -61,12 +60,15 @@ uv run --locked python run.py --source ./test.avi
 
 不支援自動物件分類、圖片資料夾序列載入或同時追蹤多個目標。
 
+專案附帶三部各 20 秒的測試片段，存於 `samples/videos/`，合計約 4 MB。
+使用方式、原片範圍、來源與授權見 [測試影片說明](samples/videos/README.md)。
+
 背景去除與前景擷取也能獨立操作：
 
 ```sh
 uv run --locked kcf-debackground --source 0 --size 40 30
 uv run --locked kcf-debackground --use-custombitwise
-uv run --locked python foreground_filter.py ./input_image.jpg
+uv run --locked python -m kcf_tracker.foreground_filter ./input_image.jpg
 ```
 
 背景去除將影像切成「列 × 欄」網格、量化平均色彩，從邊界以四向連通擴展相同顏色的背景。
@@ -75,41 +77,43 @@ uv run --locked python foreground_filter.py ./input_image.jpg
 
 ## 程式結構
 
-保留原有根目錄模組結構，透過 setuptools 的 `py-modules` 安裝；`src/` 不是目前的安裝入口。
+採用標準 src layout，程式碼集中於 `src/kcf_tracker/`，由 setuptools 安裝套件與 CLI 入口。
 
 | 檔案 | 責任 |
 | --- | --- |
-| `run.py` | CLI、滑鼠選取狀態與影像迴圈 |
-| `kcftracker.py` | `KCFTracker.init(roi, image)`、`update(image)` 及模型更新 |
-| `fhog.py` | Numba 加速的 HOG 特徵計算 |
-| `fft.py` | OpenCV DFT 與複數運算 |
-| `recttool.py` | 區域裁切、邊界填補及背景遮罩整合 |
-| `debackground.py` | 色彩網格、背景連通與比較展示 |
-| `foreground_filter.py` | 獨立的 Otsu／最大輪廓前景擷取 |
-| `utils.py` | 遮罩運算、距離與計時工具 |
+| `src/kcf_tracker/cli.py` | CLI、滑鼠選取狀態與影像迴圈 |
+| `src/kcf_tracker/tracker.py` | `KCFTracker.init(roi, image)`、`update(image)` 及模型更新 |
+| `src/kcf_tracker/fhog.py` | Numba 加速的 HOG 特徵計算 |
+| `src/kcf_tracker/fft.py` | OpenCV DFT 與複數運算 |
+| `src/kcf_tracker/recttool.py` | 區域裁切、邊界填補及背景遮罩整合 |
+| `src/kcf_tracker/debackground.py` | 色彩網格、背景連通與比較展示 |
+| `src/kcf_tracker/foreground_filter.py` | 獨立的 Otsu／最大輪廓前景擷取 |
+| `src/kcf_tracker/utils.py` | 遮罩運算、距離與計時工具 |
 | `tests/` | 合成影像追蹤、特徵運算與 CLI 回歸測試 |
+| `samples/videos/` | 三部可直接載入的短片與來源／授權說明 |
 
 `roi` 格式為 `[x, y, width, height]`。
 `update()` 信心不足時回傳 `[0, 0, 0, 0]`，保留最後模型，呼叫端應停止追蹤並等待重新 `init()`。
-內部函式及輔助方法已改為 snake_case；若外部程式曾直接使用原本的 camelCase 名稱，需同步更新。
+Python 呼叫端使用 `from kcf_tracker.tracker import KCFTracker`。
+原本從根目錄模組匯入的程式需改用 `kcf_tracker` 套件路徑；CLI 名稱不變。
 
 ## 開發與驗證
 
 ```sh
 uv sync --locked
-uv run --locked ruff check --fix .
-uv run --locked ruff format .
+uv run --locked ruff check --fix src tests
+uv run --locked ruff format src tests
 git diff
 
 # 提交前的品質檢查；不修改原始碼
-uv run --locked ruff format --check .
-uv run --locked ruff check .
+uv run --locked ruff format --check src tests
+uv run --locked ruff check src tests
 uv run --locked pre-commit validate-config
 uv run --locked pytest
 ```
 
 Ruff 採 Python 3.11 語法目標、120 字元排版目標與 `E,F,I,UP,B,N,ASYNC,LOG` 規則；忽略 `E501`。
-因實際程式在根目錄，檢查範圍使用 `.`，涵蓋根目錄模組與測試。
+檢查範圍使用 `src tests`，涵蓋套件模組與測試。
 pre-commit 以 system hook 呼叫 lock 中的 Ruff；每個 checkout 仍需自行安裝 hook，且 Git／IDE 的 PATH 必須找得到 uv。
 hook 改檔後先檢視差異，再重新 stage 與提交；不要用 `--no-verify` 略過檢查。
 測試使用合成影像與替代 GUI 呼叫，不會開啟攝影機或要求顯示器。

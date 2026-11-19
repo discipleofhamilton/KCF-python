@@ -5,7 +5,7 @@ from time import perf_counter
 
 import cv2
 
-from kcftracker import KCFTracker
+from .tracker import KCFTracker
 
 
 class Selection:
