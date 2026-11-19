@@ -1,2 +1,11 @@
 __pycache__/*
 *.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+.ruff_cache/
+.pytest_cache/
+.uv-cache/
+*.nbc
+*.nbi

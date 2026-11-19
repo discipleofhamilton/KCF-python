@@ -1,105 +1,111 @@
-import numpy as np 
+"""Interactive single-object tracking from a camera or video."""
+
+import argparse
+from time import perf_counter
+
 import cv2
-import sys
-from time import time
 
-import kcftracker
-
-selectingObject = False
-initTracking = False
-onTracking = False
-ix, iy, cx, cy = -1, -1, -1, -1
-w, h = 0, 0
-
-inteval = 1
-duration = 0.01
-
-# mouse callback function
-def draw_boundingbox(event, x, y, flags, param):
-	global selectingObject, initTracking, onTracking, ix, iy, cx,cy, w, h
-	
-	if event == cv2.EVENT_LBUTTONDOWN:
-		selectingObject = True
-		onTracking = False
-		ix, iy = x, y
-		cx, cy = x, y
-	
-	elif event == cv2.EVENT_MOUSEMOVE:
-		cx, cy = x, y
-	
-	elif event == cv2.EVENT_LBUTTONUP:
-		selectingObject = False
-		if(abs(x-ix)>10 and abs(y-iy)>10):
-			w, h = abs(x - ix), abs(y - iy)
-			ix, iy = min(x, ix), min(y, iy)
-			initTracking = True
-		else:
-			onTracking = False
-	
-	elif event == cv2.EVENT_RBUTTONDOWN:
-		onTracking = False
-		if(w>0):
-			ix, iy = x-w/2, y-h/2
-			initTracking = True
+from kcftracker import KCFTracker
 
 
+class Selection:
+    """Mouse selection and requests to initialize a new target."""
 
-if __name__ == '__main__':
-	
-	if(len(sys.argv)==1):
-		cap = cv2.VideoCapture(0)
-	elif(len(sys.argv)==2):
-		if(sys.argv[1].isdigit()):  # True if sys.argv[1] is str of a nonnegative integer
-			cap = cv2.VideoCapture(int(sys.argv[1]))
-		else:
-			cap = cv2.VideoCapture(sys.argv[1])
-			inteval = 30
-	else:  assert(0), "too many arguments"
+    def __init__(self):
+        self.selecting = False
+        self.on_tracking = False
+        self.pending = False
+        self.start = (0, 0)
+        self.cursor = (0, 0)
+        self.roi = [0, 0, 0, 0]
 
-	tracker = kcftracker.KCFTracker(True, False, True)  # hog, fixed_window, multiscale
-	#if you use hog feature, there will be a short pause after you draw a first boundingbox, that is due to the use of Numba.
+    def draw_boundingbox(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self.selecting = True
+            self.on_tracking = False
+            self.pending = False
+            self.start = self.cursor = (x, y)
+        elif event == cv2.EVENT_MOUSEMOVE:
+            self.cursor = (x, y)
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.selecting = False
+            width, height = abs(x - self.start[0]), abs(y - self.start[1])
+            if width > 10 and height > 10:
+                self.roi = [min(x, self.start[0]), min(y, self.start[1]), width, height]
+                self.pending = True
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            self.on_tracking = False
+            width, height = self.roi[2:]
+            if width > 0 and height > 0:
+                self.roi = [x - width // 2, y - height // 2, width, height]
+                self.pending = True
 
-	cv2.namedWindow('tracking')
-	cv2.setMouseCallback('tracking',draw_boundingbox)
 
-	isfirstframe = True 
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", default="0", help="Camera index or video path (default: 0)")
+    parser.add_argument("--use-hog", action="store_true", help="Use HOG rather than grayscale features")
+    parser.add_argument("--fixed-window", action="store_true", help="Use a fixed template size")
+    parser.add_argument("--multiscale", action="store_true", help="Estimate target scale changes")
+    parser.add_argument("--use-debackground", action="store_true", help="Suppress background before feature extraction")
+    return parser.parse_args(argv)
 
-	while(cap.isOpened()):
-		ret, frame = cap.read()
-		if not ret:
-			break
 
-		if isfirstframe:
-			cv2.imshow('tracking', frame)
-			cv2.waitKey(0)
-			isfirstframe = False
+def main(args):
+    source = int(args.source) if args.source.isdigit() else args.source
+    interval = 1 if isinstance(source, int) else 30
+    cap = cv2.VideoCapture(source)
+    try:
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open source: {args.source}")
+        tracker = KCFTracker(
+            hog=args.use_hog,
+            fixed_window=args.fixed_window,
+            multiscale=args.multiscale,
+            use_debackground=args.use_debackground,
+        )
+        selection = Selection()
+        duration = 0.01
+        first_frame = True
+        cv2.namedWindow("tracking")
+        cv2.setMouseCallback("tracking", selection.draw_boundingbox)
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if first_frame:
+                cv2.imshow("tracking", frame)
+                key = cv2.waitKey(0) & 0xFF
+                if key in (27, ord("q")):
+                    break
+                first_frame = False
+            if selection.selecting:
+                cv2.rectangle(frame, selection.start, selection.cursor, (0, 255, 255), 1)
+            elif selection.pending:
+                tracker.init(selection.roi, frame)
+                selection.pending = False
+                selection.on_tracking = True
+            elif selection.on_tracking:
+                start = perf_counter()
+                box = tracker.update(frame)
+                duration = 0.8 * duration + 0.2 * (perf_counter() - start)
+                if box[2] <= 0 or box[3] <= 0:
+                    selection.on_tracking = False
+                else:
+                    x, y, width, height = map(int, box)
+                    cv2.rectangle(frame, (x, y), (x + width, y + height), (0, 255, 255), 1)
+                cv2.putText(frame, f"FPS: {1 / duration:.1f}", (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            cv2.imshow("tracking", frame)
+            if cv2.waitKey(interval) & 0xFF in (27, ord("q")):
+                break
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
 
-		if selectingObject:
-			cv2.rectangle(frame,(ix,iy), (cx,cy), (0,255,255), 1)
-		elif initTracking:
-			cv2.rectangle(frame,(ix,iy), (ix+w,iy+h), (0,255,255), 2)
 
-			tracker.init([ix,iy,w,h], frame)
+def cli():
+    main(parse_arguments())
 
-			initTracking = False
-			onTracking = True
-		elif onTracking:
-			t0 = time()
-			boundingbox = tracker.update(frame)
-			t1 = time()
 
-			boundingbox = map(int, boundingbox)
-			boundingbox = list(boundingbox)
-			cv2.rectangle(frame,(boundingbox[0],boundingbox[1]), (boundingbox[0]+boundingbox[2],boundingbox[1]+boundingbox[3]), (0,255,255), 1)
-			
-			duration = 0.8*duration + 0.2*(t1-t0)
-			#duration = t1-t0
-			cv2.putText(frame, 'FPS: '+str(1/duration)[:4].strip('.'), (8,20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
-
-		cv2.imshow('tracking', frame)
-		c = cv2.waitKey(inteval) & 0xFF
-		if c==27 or c==ord('q'):
-			break
-
-	cap.release()
-	cv2.destroyAllWindows()
+if __name__ == "__main__":
+    cli()

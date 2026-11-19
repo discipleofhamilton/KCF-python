@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kcf-python"
+version = "0.1.0"
+description = "Interactive KCF object tracking with optional HOG and background filtering"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = ["numpy>=1.26", "numba>=0.61", "opencv-python>=4.10"]
+
+[project.scripts]
+kcf-track = "run:cli"
+kcf-debackground = "debackground:cli"
+
+[tool.setuptools]
+py-modules = ["run", "kcftracker", "fhog", "fft", "recttool", "debackground", "foreground_filter", "utils"]
+
+[dependency-groups]
+dev = ["pre-commit>=4.3", "pytest>=8.3", "ruff>=0.13.1"]
+
+[tool.uv]
+python-preference = "managed"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N", "ASYNC", "LOG"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

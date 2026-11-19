@@ -1,324 +1,167 @@
-import cv2
-import numpy as np
-import numba as nb
-import sys
-from sklearn.neighbors import BallTree
-from utils import get_Euclideandist, bitwise, Timer, get_error_info
+"""Color-grid background suppression and an interactive comparison demo."""
+
 import argparse
 
+import cv2
+import numba as nb
+import numpy as np
 
-# Salient color names
-color_names = np.array([[255,0,0], [255,255,0], [0,255,0], [0,255,255], [0,0,255], [255,0,255],
-                        [128,0,0], [128,128,0], [0,128,0], [0,128,128], [0,0,128], [128,0,128],
-                        [0,0,0], [128,128,128], [192,192,192], [255,255,255]], dtype=np.float32) / 255
-balltree = BallTree(color_names, leaf_size=8)
+from utils import Timer, bitwise, get_euclidean_dist
 
-
-@nb.jit(nopython=True)
-def find_similiar_colorname(cell: np.ndarray) -> np.ndarray:
-
-    global color_names
-
-    # Brute-force
-    min_dist = sys.maxsize
-    index    = -1
-
-    # Get mean color of the cell
-    mean_cell = np.zeros(3, dtype=np.float32)
-    mean_cell[0] = np.mean(cell[:,:,0])
-    mean_cell[1] = np.mean(cell[:,:,1])
-    mean_cell[2] = np.mean(cell[:,:,2])
-
-    # Brute-force
-    for i in range(len(color_names)):
-
-        # Get the distance of the salient color name and cell
-        # New optimaztion for using numba optimizer
-        dist = get_Euclideandist(color_names[i], mean_cell)
-
-        if min_dist > dist:
-            min_dist = dist
-            index    = i
-
-    return color_names[index]
+COLOR_NAMES = (
+    np.array(
+        [
+            [255, 0, 0],
+            [255, 255, 0],
+            [0, 255, 0],
+            [0, 255, 255],
+            [0, 0, 255],
+            [255, 0, 255],
+            [128, 0, 0],
+            [128, 128, 0],
+            [0, 128, 0],
+            [0, 128, 128],
+            [0, 0, 128],
+            [128, 0, 128],
+            [0, 0, 0],
+            [128, 128, 128],
+            [192, 192, 192],
+            [255, 255, 255],
+        ],
+        dtype=np.float32,
+    )
+    / 255
+)
 
 
-# @nb.jit(nopython=True)
-'''
-!!! Big Issue !!!
-Ball Tree KNN algorithm doesn't support numba library.
-I had to implement a numba version
-'''
-# def find_similiar_colorname(cell: np.ndarray) -> np.ndarray:
-
-#     global balltree
-
-#     # Get mean color of the cell
-#     mean_cell = np.zeros(3, dtype=np.float32)
-#     mean_cell[0] = np.mean(cell[:,:,0])
-#     mean_cell[1] = np.mean(cell[:,:,1])
-#     mean_cell[2] = np.mean(cell[:,:,2])
-
-#     dist, ind = balltree.query(mean_cell.reshape(1, 3), k=1)
-
-#     return dist
+@nb.njit
+def find_similar_colorname(cell):
+    mean = np.zeros(3, dtype=np.float32)
+    for channel in range(3):
+        mean[channel] = np.mean(cell[:, :, channel])
+    min_dist = np.inf
+    index = 0
+    for i in range(len(COLOR_NAMES)):
+        distance = get_euclidean_dist(COLOR_NAMES[i], mean)
+        if distance < min_dist:
+            min_dist = distance
+            index = i
+    return COLOR_NAMES[index]
 
 
-@nb.jit(nopython=True)
-def get_grids(output_size: np.ndarray, image: np.ndarray):
-
-    '''
-    The function is to split an image into small grids.
-    and get the mask by the color of each grids.
-    '''
-
-    out_h, out_w = output_size # number of cells on image height, number of cells on image width
-    h, w, c      = image.shape
-
-    cells = np.zeros((out_h, out_w, c))
-
-    cell_h = h // out_h
-    cell_w = w // out_w
-
-    # Split the cells
-
-    cell = None
-    for ch in range(cell_h, h+1, cell_h):
-        for cw in range(cell_w, w+1, cell_w):
-
-            cell = image[ch-cell_h:ch, cw-cell_w:cw,:]
-            cells[(ch-cell_h)//cell_h:ch//cell_h,\
-                  (cw-cell_w)//cell_w:cw//cell_w,:] = find_similiar_colorname(cell=cell)
-
+@nb.njit
+def get_grids(output_size, image):
+    """Quantize cell means; clamp the grid to the image to avoid empty cells."""
+    if image.ndim != 3 or image.shape[2] != 3 or image.shape[0] == 0 or image.shape[1] == 0:
+        raise ValueError("Expected a nonempty BGR image")
+    if len(output_size) != 2 or output_size[0] <= 0 or output_size[1] <= 0:
+        raise ValueError("Grid size must contain two positive integers")
+    height, width, _ = image.shape
+    rows = min(int(output_size[0]), height)
+    columns = min(int(output_size[1]), width)
+    cells = np.empty((rows, columns, 3), dtype=np.float32)
+    for row in range(rows):
+        for column in range(columns):
+            cell = image[
+                row * height // rows : (row + 1) * height // rows,
+                column * width // columns : (column + 1) * width // columns,
+            ]
+            cells[row, column] = find_similar_colorname(cell)
     return cells
 
 
-# @nb.jit(nb.none(nb.float64[:,:,:]), nopython=True)
-# @nb.jit(nb.float64[:,:,:](nb.float64[:,:,:]), nopython=True)
-@nb.jit(nopython=True)
-def connect_background(colornames: np.ndarray) -> np.ndarray:
-
-    h, w, c = colornames.shape
-
-    background = np.zeros((h, w))
-
-    # boundary is background
-    background[0, :]   = 1
-    background[h-1, :] = 1
-    background[:, 0]   = 1
-    background[:, w-1] = 1
-
-    '''
-    Here is a simple concept:
-    1. Get background colors first
-    2. Compare with the near 8 bins of its color name. 
-       Turn the bins which has same color of the background to background.
-
-    Here comes a flaut/fraction.
-    If the bin which has the same color to background may be not found.
-    '''
-
-    # To-Do
-    '''
-    Replace the simple method with connected components algorithm.
-    '''
-
-    # filter
-    f = np.array([[0,1,0],[1,1,1],[0,1,0]])
-
-    for i in range(1, h-1):
-        for j in range(1, w-1):
-
-            # get backgrounds
-            valid_bg = np.logical_and(background[i-1:i+2, j-1:j+2], f)
-            valid_cn = colornames[i-1:i+2, j-1:j+2]
-
-            for n in range(valid_bg.shape[0]):
-                for m in range(valid_bg.shape[1]):
-                    if valid_bg[n,m] and \
-                       np.array_equal(valid_cn[n,m], colornames[i, j]):
-                        background[i, j] = 1 
-                        break 
-
+@nb.njit
+def connect_background(colornames):
+    """Flood equal-color cells from every boundary using four-way connectivity."""
+    height, width, _ = colornames.shape
+    background = np.zeros((height, width), dtype=np.uint8)
+    stack = np.empty((height * width, 2), dtype=np.int64)
+    count = 0
+    for row in range(height):
+        for column in range(width):
+            if row == 0 or row == height - 1 or column == 0 or column == width - 1:
+                background[row, column] = 1
+                stack[count] = row, column
+                count += 1
+    while count:
+        count -= 1
+        row, column = stack[count]
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            y, x = row + dy, column + dx
+            if (
+                0 <= y < height
+                and 0 <= x < width
+                and not background[y, x]
+                and np.array_equal(colornames[y, x], colornames[row, column])
+            ):
+                background[y, x] = 1
+                stack[count] = y, x
+                count += 1
     return 1 - background
 
 
-def show_colornames(cn_unit: int = 100):
-
-    cn = np.zeros((cn_unit, color_names.shape[0]*cn_unit, 3))
-
-    for i in range(color_names.shape[0]):
-        cn[:,i*cn_unit:(i+1)*cn_unit,:] = color_names[i]
-
-    cv2.imshow("color names", cn)
+def show_colornames(cn_unit=100):
+    colors = np.repeat(COLOR_NAMES[np.newaxis], cn_unit, axis=0)
+    cv2.imshow("color names", np.repeat(colors, cn_unit, axis=1))
 
 
-def debackground(output_size: np.ndarray, image: np.ndarray, show_timer: bool = False) -> np.ndarray:
-
-    '''
-    In experimental, the get_grids() and bitwise() are the most 2 of time consuming method 
-    
-    To Do:
-    Try to accelerate get_grids() & bitwise()
-
-    Here is the bitwise() accelerate method:
-    It's simple. I change the process flow.
-    The reason that bitwise() cost time is because it would calculate every pixels. 
-    Even the image is 640x480, it would takes 307200 calculation.
-    I resize the original image to fit the mask shape and then do bitwise at the scale.
-    Which is downsampling the image to decrease the calculation.
-
-    2023. 3/15 Updated: Functon bitwise() done for optimizing.
-    '''
-
-    # normalize the image
-    image_norm = image / 255
-
+def debackground(output_size, image, show_timer=False):
+    """Suppress background while preserving the input image's dtype and range."""
+    if image.dtype != np.uint8:
+        raise ValueError("Expected a uint8 BGR image")
     timer = Timer()
-    # Get bins
-    bins = get_grids(output_size=output_size, image=image_norm)
-    get_bins_time = timer.timeslice()
-
-    mask = connect_background(bins)
-    get_mask_time = timer.timeslice()
-
-    img_resize = cv2.resize(image_norm, (mask.shape[1], mask.shape[0]), interpolation=cv2.INTER_AREA)
-    get_resize_mask_time = timer.timeslice()
-
-    # Processin with mask
-    res = cv2.bitwise_and(img_resize, img_resize, mask=mask.astype('uint8'))
-    res = cv2.resize(res, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_AREA)
-    get_res_time = timer.time()
-
+    bins = get_grids(np.asarray(output_size), image.astype(np.float32) / 255)
+    mask = connect_background(bins).astype(np.uint8)
+    # Apply the coarse mask at full resolution to preserve texture for HOG.
+    mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+    result = cv2.bitwise_and(image, image, mask=mask)
     if show_timer:
-        print("get bins: {:.3f}ms, get mask: {:.3f}ms, resize mask: {:.3f}ms, get result: {:.3f}ms".format(
-            get_bins_time*1000, get_mask_time*1000, get_resize_mask_time*1000, get_res_time*1000
-        ))
-
-    return res
+        print(f"debackground: {timer.time() * 1000:.3f}ms")
+    return result
 
 
-def parse_arguments():
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--source", type=str, default="0", 
-                        help="Input source from WebCam, images or video. Default: Camera 0.")
-    parser.add_argument("--show-colornames", action="store_true", 
-                        help="Show all the setting color names.")
-    parser.add_argument("--size", nargs="+", default=[40, 30],
-                        help="Set mosaic/mask size. Default: [40, 30]")
-    parser.add_argument("--use-custombitwise", action="store_true", 
-                        help="Replace opencv bitwise operation with customized bitwise function.")
-    return parser.parse_args()
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", default="0", help="Camera index or video path")
+    parser.add_argument("--show-colornames", action="store_true")
+    parser.add_argument("--size", type=int, nargs=2, default=[40, 30], metavar=("ROWS", "COLUMNS"))
+    parser.add_argument("--use-custombitwise", action="store_true")
+    args = parser.parse_args(argv)
+    if min(args.size) <= 0:
+        parser.error("--size values must be positive")
+    return args
 
 
-def main():
-
-    args = parse_arguments()
-
-    # Show color names
-    if args.show_colornames:
-        show_colornames()
-
-    # if the source is WebCam
-    # then convert the string to integer
-    source = None
-    if args.source.isdigit():
-        source = int(args.source)
-
-    else:
-        # path to the video or parent directory of the images
-        '''
-        ToDo:
-        List all the images to the source, making the VideoCapture can read the images from it 
-        '''
-        source = args.source 
-
-    cap = None
+def main(args):
+    source = int(args.source) if args.source.isdigit() else args.source
+    cap = cv2.VideoCapture(source)
     try:
-        cap = cv2.VideoCapture(source)
-    
-    except Exception as e:
-        get_error_info(e)
-        cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
-
-    # 8, 6
-    size = np.array(args.size)
-
-    if not cap.isOpened():
-        print("Cannot open camera")
-        exit()
-
-    total_exe_time = 0
-    frame_counter  = 0
-
-    while True:
-
-        # Get frame
-        ret, frame = cap.read()
-
-        if not ret:
-            print('Can not receive frame!!!')
-            break
-
-        frame_counter += 1
-
-        # normalize the image
-        frame_norm = frame / 255
-
-        timer = Timer()
-
-        # Get grids
-        grids = get_grids(output_size=size, image=frame_norm)
-        exe_getgrids_time = timer.timeslice()
-
-        mask = connect_background(grids)
-        # mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_AREA)
-        img_resize = cv2.resize(frame_norm, (mask.shape[1], mask.shape[0]), interpolation=cv2.INTER_AREA)
-        exe_getmask_time = timer.timeslice()
-
-        '''
-        Processin with mask
-        Do bitwise through customized function
-        '''
-        if args.use_custombitwise:
-            res = bitwise(img_resize, mask.astype('uint8'))
-        else: # OR do bitwise through opencv library
-            res = cv2.bitwise_and(img_resize, img_resize, mask=mask.astype('uint8'))    
-            
-        bitwise_time = timer.timeslice()
-
-        res = cv2.resize(res, (frame_norm.shape[1], frame_norm.shape[0]), interpolation=cv2.INTER_AREA)
-        get_res_time = timer.time()
-
-        if frame_counter > 1:
-            total_exe_time += exe_getgrids_time + exe_getmask_time + bitwise_time
-
-        print('get grid time: %.3fms, get mask time: %.3fms, bitwise time: %.3fms' % 
-                (
-                    exe_getgrids_time*1000, 
-                    exe_getmask_time*1000,
-                    bitwise_time*1000
-                )
-             )
-
-        # Show image
-        concate = np.concatenate((frame_norm, res), axis=1)
-        cv2.imshow('res', concate)
-
-        # Press 'q', 'ESC', 'SPACE' to exit the iteration
-        break_point = cv2.waitKey(1)
-        if break_point == ord('q') or \
-           break_point == 27 or \
-           break_point == 32:
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-
-    print('\ncell size: %s, mean exe time: %.3fms' % (str(size), total_exe_time*1000/(frame_counter-1)))
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open source: {args.source}")
+        if args.show_colornames:
+            show_colornames()
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if args.use_custombitwise:
+                bins = get_grids(np.asarray(args.size), frame.astype(np.float32) / 255)
+                mask = connect_background(bins).astype(np.uint8)
+                mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_NEAREST)
+                result = bitwise(frame, mask)
+            else:
+                result = debackground(args.size, frame, show_timer=True)
+            cv2.imshow("res", np.concatenate((frame, result), axis=1))
+            if cv2.waitKey(1) & 0xFF in (ord("q"), 27, 32):
+                break
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
 
 
-if __name__ == '__main__':
+def cli():
+    main(parse_arguments())
 
-    main()
+
+if __name__ == "__main__":
+    cli()
