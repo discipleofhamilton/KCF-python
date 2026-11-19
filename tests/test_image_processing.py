@@ -2,12 +2,11 @@ import cv2
 import numpy as np
 import pytest
 
-import fft
-import fhog
-from debackground import connect_background, debackground, get_grids
-from foreground_filter import filter_foreground
-from recttool import subwindow
-from utils import bitwise
+from kcf_tracker import fft, fhog
+from kcf_tracker.debackground import connect_background, debackground, get_grids
+from kcf_tracker.foreground_filter import filter_foreground
+from kcf_tracker.recttool import subwindow
+from kcf_tracker.utils import bitwise
 
 
 def test_complex_arithmetic_matches_numpy():

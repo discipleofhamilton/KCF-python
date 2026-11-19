@@ -11,11 +11,15 @@ requires-python = ">=3.11,<3.13"
 dependencies = ["numpy>=1.26", "numba>=0.61", "opencv-python>=4.10"]
 
 [project.scripts]
-kcf-track = "run:cli"
-kcf-debackground = "debackground:cli"
+kcf-track = "kcf_tracker.cli:cli"
+kcf-debackground = "kcf_tracker.debackground:cli"
 
 [tool.setuptools]
-py-modules = ["run", "kcftracker", "fhog", "fft", "recttool", "debackground", "foreground_filter", "utils"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["kcf_tracker*"]
 
 [dependency-groups]
 dev = ["pre-commit>=4.3", "pytest>=8.3", "ruff>=0.13.1"]

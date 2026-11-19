@@ -6,7 +6,7 @@ import cv2
 import numba as nb
 import numpy as np
 
-from utils import Timer, bitwise, get_euclidean_dist
+from .utils import Timer, bitwise, get_euclidean_dist
 
 COLOR_NAMES = (
     np.array(

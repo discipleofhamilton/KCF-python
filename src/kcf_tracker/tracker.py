@@ -1,9 +1,7 @@
 import cv2
 import numpy as np
 
-import fft
-import fhog
-import recttool
+from . import fft, fhog, recttool
 
 
 # KCF tracker

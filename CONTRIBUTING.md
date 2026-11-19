@@ -18,8 +18,8 @@
 
 ```sh
 uv sync --locked
-uv run --locked ruff format --check .
-uv run --locked ruff check .
+uv run --locked ruff format --check src tests
+uv run --locked ruff check src tests
 uv run --locked pre-commit validate-config
 uv run --locked pytest
 ```

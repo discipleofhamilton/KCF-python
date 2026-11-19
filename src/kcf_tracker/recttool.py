@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from debackground import debackground
+from .debackground import debackground
 
 
 def x2(rect):
