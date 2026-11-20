@@ -42,6 +42,9 @@ uv run --locked kcf-track --source 2 --use-hog --multiscale
 # 影片與背景去除
 uv run --locked kcf-track --source samples/videos/big_buck_bunny_20s.mp4 --use-hog --use-debackground
 
+# 色彩直方圖前景模型（建議取代 --use-debackground）
+uv run --locked kcf-track --source samples/videos/sintel_20s.mp4 --use-hog --multiscale --use-color-model
+
 # 也可透過套件入口執行
 uv run --locked python -m kcf_tracker --source samples/videos/sintel_20s.mp4
 ```
@@ -57,6 +60,19 @@ uv run --locked python -m kcf_tracker --source samples/videos/sintel_20s.mp4
 | `--fixed-window` | 將範本的最長邊固定為約 96 像素，尺寸仍會對齊特徵網格 |
 | `--multiscale` | 比較原大小及相鄰兩個尺度；啟用時採固定範本尺寸 |
 | `--use-debackground` | 擷取特徵前套用背景遮罩，預設關閉 |
+| `--use-color-model` | 啟用色彩直方圖前景模型，與 `--use-debackground` 互斥 |
+| `--color-merge` | 色彩響應在融合響應中的比重，`0` 停用融合，預設 `0.3` |
+| `--color-weight-floor` | HOG 特徵中純背景的軟權重（例如 `0.6`），`1` 停用，預設 `1` |
+
+色彩模型（類似 DAT／Staple 的做法）以目標框學習前景直方圖、以外圍一圈學習背景直方圖（BGR 每通道 16 bin），
+逐像素得到 `P(前景|顏色)`，每幀以學習率 0.04 更新。這個機率圖有兩種用法：
+
+- **響應融合**：以目標大小的方框平均機率圖，作為色彩響應，與 KCF 響應依 `--color-merge` 線性融合。
+- **軟權重**（選用）：只乘在 HOG 的訓練樣本上，不乘搜尋區域，避免產生像硬遮罩那樣的假邊緣。
+
+在合成變形測試中（真實影片背景、目標旋轉並伸縮），HOG 搭配融合的平均 IoU 為 0.63，
+單純 HOG 為 0.06，`--use-debackground` 為 0.20。軟權重單獨使用略有幫助，但與融合併用反而變差，
+因此預設關閉。灰階特徵不套用軟權重，因為在測試中會造成明顯漂移。
 
 不支援自動物件分類、圖片資料夾序列載入或同時追蹤多個目標。
 
@@ -86,6 +102,7 @@ uv run --locked python -m kcf_tracker.foreground_filter ./input_image.jpg
 | `src/kcf_tracker/fhog.py` | Numba 加速的 HOG 特徵計算 |
 | `src/kcf_tracker/fft.py` | OpenCV DFT 與複數運算 |
 | `src/kcf_tracker/recttool.py` | 區域裁切、邊界填補及背景遮罩整合 |
+| `src/kcf_tracker/color_model.py` | 色彩直方圖前景模型、軟權重與色彩響應 |
 | `src/kcf_tracker/debackground.py` | 色彩網格、背景連通與比較展示 |
 | `src/kcf_tracker/foreground_filter.py` | 獨立的 Otsu／最大輪廓前景擷取 |
 | `src/kcf_tracker/utils.py` | 遮罩運算、距離與計時工具 |

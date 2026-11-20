@@ -2,11 +2,28 @@ import cv2
 import numpy as np
 
 from . import fft, fhog, recttool
+from .color_model import ColorHistogramModel
 
 
 # KCF tracker
 class KCFTracker:
-    def __init__(self, hog=False, fixed_window=True, multiscale=False, pv_thres=0.2, use_debackground: bool = False):
+    def __init__(
+        self,
+        hog=False,
+        fixed_window=True,
+        multiscale=False,
+        pv_thres=0.2,
+        use_debackground: bool = False,
+        use_color_model: bool = False,
+        color_weight_floor: float = 1.0,
+        color_merge_factor: float = 0.3,
+    ):
+        if use_debackground and use_color_model:
+            raise ValueError("use_debackground and use_color_model are mutually exclusive")
+        if not 0.0 <= color_weight_floor <= 1.0:
+            raise ValueError("color_weight_floor must be in [0, 1]")
+        if not 0.0 <= color_merge_factor <= 1.0:
+            raise ValueError("color_merge_factor must be in [0, 1]")
         self.lambdar = 0.0001  # regularization
         self.padding = 2.5  # extra area surrounding the target
         self.output_sigma_factor = 0.125  # bandwidth of gaussian target
@@ -37,6 +54,12 @@ class KCFTracker:
             self.scale_step = 1
 
         self._use_debackground = use_debackground
+        # Color-histogram foreground model: soft feature weight plus Staple-style response fusion.
+        self._color = ColorHistogramModel() if use_color_model else None
+        # HOG weight of pure background; 1 (default) disables weighting. In a synthetic deformation
+        # benchmark the weight helped alone but hurt when combined with fusion, so it is opt-in.
+        self.color_weight_floor = color_weight_floor
+        self.color_merge_factor = color_merge_factor  # share of the color response; 0 disables fusion
 
         self._tmpl_sz = [0, 0]  # cv::Size, [width,height]  #[int,int]
         self._roi = [0.0, 0.0, 0.0, 0.0]  # cv::Rect2f, [x,y,width,height]  #[float,float,float,float]
@@ -105,6 +128,29 @@ class KCFTracker:
         return d
 
     def get_features(self, image, inithann, scale_adjust=1.0):
+        return self._features(image, inithann, scale_adjust)[0]
+
+    def _feature_border(self):
+        """Patch pixels per side that the HOG grid drops (see fhog.normalize_and_truncate)."""
+        return self.cell_size if self._hogfeatures else 0
+
+    def _target_size_in_patch(self, scale_adjust):
+        factor = 1.0 / (self._scale * scale_adjust)
+        return self._roi[2] * factor, self._roi[3] * factor
+
+    def _features(self, image, inithann, scale_adjust=1.0, weighted=False):
+        """Return the windowed feature map and the template-sized patch it came from.
+
+        ``weighted`` multiplies in the soft color weight computed from this same patch. Only
+        training samples are weighted, as in CSR-DCF: the filter learns mostly from the target,
+        while search features stay unweighted. Weighting the search too would apply the previous
+        frame's mask to both sides, and the matching mask patterns would bias the peak toward zero
+        motion.
+
+        The weight applies to HOG only. Raw grayscale features are signed intensities: scaling the
+        template's background without scaling the search's changes how the patch looks, and in
+        testing the box drifted by more than 20 px. Grayscale tracking uses response fusion alone.
+        """
         extracted_roi = [0, 0, 0, 0]  # [int,int,int,int]
         cx = self._roi[0] + self._roi[2] / 2  # float
         cy = self._roi[1] + self._roi[3] / 2  # float
@@ -170,12 +216,22 @@ class KCFTracker:
         if inithann:
             self.create_hanning_mats()  # create_hanning_mats need size_patch
 
-        features_map = self.hann * features_map
-        return features_map
+        window = self.hann
+        if weighted and self._hogfeatures and self._color is not None and self.color_weight_floor < 1.0:
+            grid = (self.size_patch[0], self.size_patch[1])
+            weight = self._color.spatial_weight(z, grid, self._feature_border(), self.color_weight_floor)
+            window = window * weight.reshape(1, -1)
+        return window * features_map, z
 
-    def detect(self, z, x):
+    def detect(self, z, x, patch=None, scale_adjust=1.0):
         k = self.gaussian_correlation(x, z)
         res = fft.real(fft.fftd(fft.complex_multiplication(self._alphaf, fft.fftd(k)), True))
+
+        if patch is not None and self._color is not None and self.color_merge_factor > 0:
+            color = self._color.response(
+                patch, self._target_size_in_patch(scale_adjust), res.shape, self._feature_border()
+            )
+            res = (1 - self.color_merge_factor) * res + self.color_merge_factor * color
 
         _, pv, _, pi = cv2.minMaxLoc(res)  # pv:float  pi:tuple of int
         p = [float(pi[0]), float(pi[1])]  # cv::Point2f, [x,y]  #[float,float]
@@ -190,6 +246,12 @@ class KCFTracker:
 
         return p, pv
 
+    def _detect_at_scale(self, image, scale_adjust):
+        features, patch = self._features(image, 0, scale_adjust)
+        if self._color is None:
+            return self.detect(self._tmpl, features)
+        return self.detect(self._tmpl, features, patch, scale_adjust)
+
     def train(self, x, train_interp_factor):
         k = self.gaussian_correlation(x, x)
         alphaf = fft.complex_division(self._prob, fft.fftd(k) + self.lambdar)
@@ -201,7 +263,9 @@ class KCFTracker:
         if len(roi) != 4 or not np.all(np.isfinite(roi)) or roi[2] <= 0 or roi[3] <= 0:
             raise ValueError("ROI must be finite [x, y, width, height] with positive dimensions")
         self._roi = list(map(float, roi))
-        self._tmpl = self.get_features(image, 1)
+        if self._color is not None:
+            self._color.init(image, self._roi)  # discards any previous target's histograms
+        self._tmpl, _ = self._features(image, 1, weighted=True)
         self._prob = self.create_gaussian_peak(self.size_patch[0], self.size_patch[1])
         self._alphaf = np.zeros((self.size_patch[0], self.size_patch[1], 2), np.float32)
         self.train(self._tmpl, 1.0)
@@ -221,14 +285,14 @@ class KCFTracker:
         cx = self._roi[0] + self._roi[2] / 2.0
         cy = self._roi[1] + self._roi[3] / 2.0
 
-        loc, peak_value = self.detect(self._tmpl, self.get_features(image, 0, 1.0))
+        loc, peak_value = self._detect_at_scale(image, 1.0)
         scale_adjust = 1.0
 
         if self.scale_step != 1:
             # Test at a smaller _scale
-            new_loc1, new_peak_value1 = self.detect(self._tmpl, self.get_features(image, 0, 1.0 / self.scale_step))
+            new_loc1, new_peak_value1 = self._detect_at_scale(image, 1.0 / self.scale_step)
             # Test at a bigger _scale
-            new_loc2, new_peak_value2 = self.detect(self._tmpl, self.get_features(image, 0, self.scale_step))
+            new_loc2, new_peak_value2 = self._detect_at_scale(image, self.scale_step)
 
             if self.scale_weight * new_peak_value1 > peak_value and new_peak_value1 > new_peak_value2:
                 loc = new_loc1
@@ -258,7 +322,9 @@ class KCFTracker:
             self._roi[1] = -self._roi[3] + 2
         assert self._roi[2] > 0 and self._roi[3] > 0
 
-        x = self.get_features(image, 0, 1.0)
+        if self._color is not None:
+            self._color.update(image, self._roi)
+        x, _ = self._features(image, 0, 1.0, weighted=True)
         self.train(x, self.interp_factor)
 
         return self._roi

@@ -66,3 +66,12 @@ def test_background_cli_requires_two_positive_grid_dimensions():
     assert parse_background_arguments(["--size", "8", "6"]).size == [8, 6]
     with pytest.raises(SystemExit):
         parse_background_arguments(["--size", "0", "6"])
+
+
+def test_tracking_cli_color_model_options():
+    args = cli.parse_arguments(["--use-color-model", "--color-merge", "0.5", "--color-weight-floor", "1"])
+    assert args.use_color_model and args.color_merge == 0.5 and args.color_weight_floor == 1.0
+    with pytest.raises(SystemExit):
+        cli.parse_arguments(["--use-color-model", "--use-debackground"])
+    with pytest.raises(SystemExit):
+        cli.parse_arguments(["--color-merge", "2"])
