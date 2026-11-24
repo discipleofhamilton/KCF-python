@@ -15,9 +15,14 @@ from io import BytesIO
 from pathlib import Path
 
 BASE = "https://data.votchallenge.net/vot2016/main/"
-DEFAULT = [
+# Sequences used while developing and tuning; HOLDOUT was only used to check the final choice.
+DEVELOPMENT = [
     "bag", "blanket", "book", "butterfly", "car2", "crossing", "glove", "godfather",
     "handball1", "motocross1", "rabbit", "racing", "sheep", "sphere", "tunnel", "wiper",
+]  # fmt: skip
+HOLDOUT = [
+    "ball2", "bmx", "bolt2", "graduate", "iceskater1", "leaves",
+    "matrix", "motocross2", "pedestrian1", "shaking", "singer3", "soccer2",
 ]  # fmt: skip
 PYSOT_BAG = "https://github.com/STVIR/pysot/raw/master/demo/bag.avi"
 
@@ -30,7 +35,7 @@ def fetch(url):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", default="benchmarks/data")
-    parser.add_argument("--sequences", nargs="*", default=DEFAULT)
+    parser.add_argument("--sequences", nargs="*", default=DEVELOPMENT + HOLDOUT)
     args = parser.parse_args(argv)
     out = Path(args.out)
     sequences = {s["name"]: s for s in json.loads(fetch(BASE + "description.json"))["sequences"]}

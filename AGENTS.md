@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for AI coding agents working in this repository. The README and CONTRIBUTING are written in Chinese (Traditional); this file summarizes the parts that matter for code changes.
+Guidance for AI coding agents working in this repository. README.md is in English (README_CH.md is the Traditional Chinese version); CONTRIBUTING.md is in Traditional Chinese. This file summarizes the parts that matter for code changes.
 
 ## Project
 
@@ -25,12 +25,15 @@ uv run --locked pytest tests/test_tracking.py::test_recovery_gives_up_after_max_
 uv run --locked pytest tests/test_tracking.py -k scale_filter
 
 # Run the tracker (needs a display; first frame pauses for mouse ROI selection)
-uv run --locked kcf-track --source samples/videos/sintel_20s.mp4 --use-hog --multiscale --use-color-model
+uv run --locked kcf-track --source path/to/video.mp4 --use-hog --multiscale --use-color-model
 uv run --locked kcf-debackground --source 0 --size 40 30
 
 # Offline benchmark (VOT2016 data goes to benchmarks/data/, which is gitignored)
 uv run --locked python benchmarks/fetch_vot.py --out benchmarks/data
-uv run --locked python benchmarks/evaluate.py --data benchmarks/data --configs hog hog_ms_color --json results.json
+uv run --locked python benchmarks/evaluate.py --data benchmarks/data/vot --video bag=benchmarks/data/pysot/bag.avi --configs hog_ms_color hog_ms_color_rec --json results.json
+
+# Multi-platform check in headless Linux containers (linux/arm64 and linux/amd64, Python 3.11 and 3.12)
+docker/run-tests.sh benchmarks/data
 ```
 
 - Manage deps with `uv add` / `uv remove`; never hand-edit `uv.lock` or use `--frozen` to hide drift.

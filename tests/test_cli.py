@@ -80,3 +80,9 @@ def test_tracking_cli_color_model_options():
 def test_tracking_cli_recovery_option():
     assert cli.parse_arguments(["--recovery"]).recovery
     assert not cli.parse_arguments([]).recovery
+
+
+def test_tracking_cli_scale_options_are_exclusive():
+    assert cli.parse_arguments(["--scale-filter"]).scale_filter
+    with pytest.raises(SystemExit):
+        cli.parse_arguments(["--scale-filter", "--multiscale"])
