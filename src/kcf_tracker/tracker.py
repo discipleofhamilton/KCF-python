@@ -65,8 +65,10 @@ class KCFTracker:
         self._roi = [0.0, 0.0, 0.0, 0.0]  # cv::Rect2f, [x,y,width,height]  #[float,float,float,float]
         self.size_patch = [0, 0, 0]  # [int,int,int]
         self._scale = 1.0  # float
-        self._alphaf = None  # numpy.ndarray    (size_patch[0], size_patch[1], 2)
-        self._prob = None  # numpy.ndarray    (size_patch[0], size_patch[1], 2)
+        self._alphaf = None  # complex half spectrum (size_patch[0], size_patch[1] // 2 + 1)
+        self._prob = None  # complex half spectrum (size_patch[0], size_patch[1] // 2 + 1)
+        self._tmpl_f = None  # spectrum of self._tmpl, kept in sync by train()
+        self._tmpl_sq = 0.0  # squared norm of self._tmpl
         self._tmpl = None  # numpy.ndarray    raw: (size_patch[0], size_patch[1])   hog: (size_patch[2], size_patch[0]*size_patch[1])
         self.hann = None  # numpy.ndarray    raw: (size_patch[0], size_patch[1])   hog: (size_patch[2], size_patch[0]*size_patch[1])
 
@@ -95,37 +97,39 @@ class KCFTracker:
         y, x = np.ogrid[0:sizey, 0:sizex]
         y, x = (y - syh) ** 2, (x - sxh) ** 2
         res = np.exp(mult * (y + x))
-        return fft.fftd(res)
+        return fft.rfft2(res.astype(np.float32))
+
+    def _spatial_shape(self):
+        return (self.size_patch[0], self.size_patch[1])
+
+    def _spectrum(self, x):
+        """Batched half-spectrum of a feature map: all HOG channels go through one FFT call."""
+        if self._hogfeatures:
+            x = x.reshape((self.size_patch[2], self.size_patch[0], self.size_patch[1]))
+        return fft.rfft2(x)
+
+    def _kernel(self, xf, xx, zf=None, zz=None):
+        """Gaussian kernel k(x, z) from precomputed spectra and squared norms.
+
+        Cross-power spectra are summed over channels in the Fourier domain, so a whole
+        multi-channel correlation costs one inverse FFT. ``zf=None`` means the
+        auto-correlation k(x, x), which needs only |X|^2.
+        """
+        if zf is None:
+            cross = xf.real * xf.real + xf.imag * xf.imag
+            zz = xx
+        else:
+            cross = xf * zf.conj()
+        if cross.ndim == 3:
+            cross = cross.sum(axis=0)
+        c = fft.rearrange(fft.irfft2(cross, self._spatial_shape()).astype(np.float32))
+        d = (xx + zz - 2.0 * c) / (self.size_patch[0] * self.size_patch[1] * self.size_patch[2])
+        d = d * (d >= 0)
+        return np.exp(-d / (self.sigma * self.sigma))
 
     def gaussian_correlation(self, x1, x2):
-        if self._hogfeatures:
-            c = np.zeros((self.size_patch[0], self.size_patch[1]), np.float32)
-            for i in range(self.size_patch[2]):
-                x1aux = x1[i, :].reshape((self.size_patch[0], self.size_patch[1]))
-                x2aux = x2[i, :].reshape((self.size_patch[0], self.size_patch[1]))
-                caux = cv2.mulSpectrums(fft.fftd(x1aux), fft.fftd(x2aux), 0, conjB=True)
-                caux = fft.real(fft.fftd(caux, True))
-                c += caux
-            c = fft.rearrange(c)
-        else:
-            c = cv2.mulSpectrums(fft.fftd(x1), fft.fftd(x2), 0, conjB=True)  # 'conjB=' is necessary!
-            c = fft.fftd(c, True)
-            c = fft.real(c)
-            c = fft.rearrange(c)
-
-        if x1.ndim == 3 and x2.ndim == 3:
-            d = (np.sum(x1[:, :, 0] * x1[:, :, 0]) + np.sum(x2[:, :, 0] * x2[:, :, 0]) - 2.0 * c) / (
-                self.size_patch[0] * self.size_patch[1] * self.size_patch[2]
-            )
-        elif x1.ndim == 2 and x2.ndim == 2:
-            d = (np.sum(x1 * x1) + np.sum(x2 * x2) - 2.0 * c) / (
-                self.size_patch[0] * self.size_patch[1] * self.size_patch[2]
-            )
-
-        d = d * (d >= 0)
-        d = np.exp(-d / (self.sigma * self.sigma))
-
-        return d
+        """Gaussian kernel between two spatial feature maps (reference/compatibility API)."""
+        return self._kernel(self._spectrum(x1), float(np.sum(x1 * x1)), self._spectrum(x2), float(np.sum(x2 * x2)))
 
     def get_features(self, image, inithann, scale_adjust=1.0):
         return self._features(image, inithann, scale_adjust)[0]
@@ -224,8 +228,12 @@ class KCFTracker:
         return window * features_map, z
 
     def detect(self, z, x, patch=None, scale_adjust=1.0):
-        k = self.gaussian_correlation(x, z)
-        res = fft.real(fft.fftd(fft.complex_multiplication(self._alphaf, fft.fftd(k)), True))
+        if z is self._tmpl:  # the template's spectrum and norm are cached by train()
+            zf, zz = self._tmpl_f, self._tmpl_sq
+        else:
+            zf, zz = self._spectrum(z), float(np.sum(z * z))
+        k = self._kernel(self._spectrum(x), float(np.sum(x * x)), zf, zz)
+        res = fft.irfft2(self._alphaf * fft.rfft2(k), k.shape).astype(np.float32)
 
         if patch is not None and self._color is not None and self.color_merge_factor > 0:
             color = self._color.response(
@@ -253,11 +261,18 @@ class KCFTracker:
         return self.detect(self._tmpl, features, patch, scale_adjust)
 
     def train(self, x, train_interp_factor):
-        k = self.gaussian_correlation(x, x)
-        alphaf = fft.complex_division(self._prob, fft.fftd(k) + self.lambdar)
+        xf = self._spectrum(x)
+        k = self._kernel(xf, float(np.sum(x * x)))
+        # The original packed-complex code added lambdar to both the real and imaginary parts;
+        # kept for bit-for-bit comparable behaviour.
+        alphaf = self._prob / (fft.rfft2(k) + self.lambdar * (1 + 1j))
 
-        self._tmpl = (1 - train_interp_factor) * self._tmpl + train_interp_factor * x
-        self._alphaf = (1 - train_interp_factor) * self._alphaf + train_interp_factor * alphaf
+        a = train_interp_factor
+        self._tmpl = (1 - a) * self._tmpl + a * x
+        # The DFT is linear, so the template spectrum follows the same interpolation as the template.
+        self._tmpl_f = (1 - a) * self._tmpl_f + a * xf
+        self._tmpl_sq = float(np.sum(self._tmpl * self._tmpl))
+        self._alphaf = (1 - a) * self._alphaf + a * alphaf
 
     def init(self, roi, image):
         if len(roi) != 4 or not np.all(np.isfinite(roi)) or roi[2] <= 0 or roi[3] <= 0:
@@ -267,7 +282,8 @@ class KCFTracker:
             self._color.init(image, self._roi)  # discards any previous target's histograms
         self._tmpl, _ = self._features(image, 1, weighted=True)
         self._prob = self.create_gaussian_peak(self.size_patch[0], self.size_patch[1])
-        self._alphaf = np.zeros((self.size_patch[0], self.size_patch[1], 2), np.float32)
+        self._alphaf = np.zeros_like(self._prob)
+        self._tmpl_f = np.zeros_like(self._spectrum(self._tmpl))
         self.train(self._tmpl, 1.0)
 
     def update(self, image):

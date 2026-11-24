@@ -47,15 +47,19 @@ class ColorHistogramModel:
         return image >> self._shift
 
     def _flat_index(self, quantized):
-        q = quantized.astype(np.int32)
-        return (q[..., 0] * self.bins + q[..., 1]) * self.bins + q[..., 2]
+        # bins**3 <= 4096 for the default 16 bins, so uint16 halves the memory traffic of int32.
+        dtype = np.uint16 if self.bins**3 <= 1 << 16 else np.int32
+        q = quantized.astype(dtype)
+        return (q[..., 0] * dtype(self.bins) + q[..., 1]) * dtype(self.bins) + q[..., 2]
 
-    def _histogram(self, flat_index, mask):
-        values = flat_index[mask]
-        if values.size == 0:
+    def _counts(self, flat_index):
+        return np.bincount(flat_index.ravel(), minlength=self.bins**3)
+
+    def _normalize(self, counts):
+        total = int(counts.sum())
+        if total == 0:
             return None
-        histogram = np.bincount(values, minlength=self.bins**3).astype(np.float32)
-        return histogram / values.size
+        return counts.astype(np.float32) / total
 
     @staticmethod
     def _box(cx, cy, width, height, shape):
@@ -74,18 +78,18 @@ class ColorHistogramModel:
             return None, None
         flat = self._flat_index(self._quantize(image[sy0:sy1, sx0:sx1]))
 
-        target = np.zeros(flat.shape, dtype=bool)
+        # Both regions are rectangles, so slice them instead of building boolean masks, and get
+        # the background (surround minus target box) by subtracting integer counts.
         tx0, ty0, tx1, ty1 = self._box(cx, cy, width, height, image.shape)
-        target[ty0 - sy0 : ty1 - sy0, tx0 - sx0 : tx1 - sx0] = True
+        target = self._counts(flat[ty0 - sy0 : ty1 - sy0, tx0 - sx0 : tx1 - sx0])
 
         # Box corners usually contain background, so learn the foreground from a shrunken box.
-        inner = np.zeros(flat.shape, dtype=bool)
         ix0, iy0, ix1, iy1 = self._box(
             cx, cy, width * self.foreground_shrink, height * self.foreground_shrink, image.shape
         )
-        inner[iy0 - sy0 : iy1 - sy0, ix0 - sx0 : ix1 - sx0] = True
+        inner = self._counts(flat[iy0 - sy0 : iy1 - sy0, ix0 - sx0 : ix1 - sx0])
 
-        return self._histogram(flat, inner), self._histogram(flat, ~target)
+        return self._normalize(inner), self._normalize(self._counts(flat) - target)
 
     def _refresh_lut(self):
         foreground, background = self._foreground, self._background
