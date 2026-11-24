@@ -45,13 +45,17 @@ uv run --locked kcf-track --source samples/videos/big_buck_bunny_20s.mp4 --use-h
 # 色彩直方圖前景模型（建議取代 --use-debackground）
 uv run --locked kcf-track --source samples/videos/sintel_20s.mp4 --use-hog --multiscale --use-color-model
 
+# 建議組合：HOG＋多尺度＋色彩模型＋信心門控與重新偵測
+uv run --locked kcf-track --source samples/videos/big_buck_bunny_20s.mp4 --use-hog --multiscale --use-color-model --recovery
+
 # 也可透過套件入口執行
 uv run --locked python -m kcf_tracker --source samples/videos/sintel_20s.mp4
 ```
 
 操作：第一幀暫停，左鍵拖曳框選目標後，按任意鍵開始播放；`q`／`Esc` 直接離開。
 播放中可重新左鍵框選，或用右鍵將上次框選的大小移到指定中心位置。
-框選寬、高都必須大於 10 像素。追蹤信心不足時會停止畫框，需重新指定目標。
+框選寬、高都必須大於 10 像素。追蹤信心不足時會停止畫框，需重新指定目標；
+啟用 `--recovery` 時改為持續搜尋：黃框為追蹤中、橘框為信心不足（不更新模型）、紅框標示 searching 為遺失後搜尋中。
 
 | 選項 | 功能 |
 | --- | --- |
@@ -59,6 +63,8 @@ uv run --locked python -m kcf_tracker --source samples/videos/sintel_20s.mp4
 | `--use-hog` | 使用 HOG；預設使用灰階特徵 |
 | `--fixed-window` | 將範本的最長邊固定為約 96 像素，尺寸仍會對齊特徵網格 |
 | `--multiscale` | 比較原大小及相鄰兩個尺度；啟用時採固定範本尺寸 |
+| `--scale-filter` | 實驗性：以 fDSST 式尺度濾波器估計尺度，與 `--multiscale` 互斥 |
+| `--recovery` | 依 APCE／峰值判斷信心，信心低時不更新模型；目標遺失時擴大範圍重新偵測而非停止 |
 | `--use-debackground` | 擷取特徵前套用背景遮罩，預設關閉 |
 | `--use-color-model` | 啟用色彩直方圖前景模型，與 `--use-debackground` 互斥 |
 | `--color-merge` | 色彩響應在融合響應中的比重，`0` 停用融合，預設 `0.3` |
@@ -73,6 +79,13 @@ uv run --locked python -m kcf_tracker --source samples/videos/sintel_20s.mp4
 在合成變形測試中（真實影片背景、目標旋轉並伸縮），HOG 搭配融合的平均 IoU 為 0.63，
 單純 HOG 為 0.06，`--use-debackground` 為 0.20。軟權重單獨使用略有幫助，但與融合併用反而變差，
 因此預設關閉。灰階特徵不套用軟權重，因為在測試中會造成明顯漂移。
+
+### 效能與準確度
+
+相關運算在頻域批次處理（所有 HOG 通道一次 FFT、快取範本頻譜），追蹤結果不變，速度約為先前的 1.7 倍。
+在 28 部 VOT2016 序列（含 SiamRPN 範例的垃圾袋影片）上，建議組合的平均 IoU 由 0.339 提升到 0.389，
+reset 失敗由 54 次降到 49 次，速度由 236 提升到 401 FPS（Apple M2 Pro）。
+評估方法、各優化方案的比較與平台驗證見 [基準測試說明](benchmarks/README.md)。
 
 不支援自動物件分類、圖片資料夾序列載入或同時追蹤多個目標。
 

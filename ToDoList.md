@@ -8,6 +8,11 @@
 
 ## Long-Term Tracking Robustness
 
+- Done: `--recovery` gates model updates on APCE/peak confidence and re-detects a lost target
+  in a wider window instead of stopping (see `benchmarks/README.md`).
+- Open: fast motion (glove, rabbit, motocross1) still drifts while confidence stays high;
+  `--scale-filter` helps on some sequences but not on the held-out set.
+
 
 ## Accelerate Debackground Method
 

@@ -46,7 +46,11 @@ def parse_arguments(argv=None):
     parser.add_argument("--source", default="0", help="Camera index or video path (default: 0)")
     parser.add_argument("--use-hog", action="store_true", help="Use HOG rather than grayscale features")
     parser.add_argument("--fixed-window", action="store_true", help="Use a fixed template size")
-    parser.add_argument("--multiscale", action="store_true", help="Estimate target scale changes")
+    scale = parser.add_mutually_exclusive_group()
+    scale.add_argument("--multiscale", action="store_true", help="Estimate target scale changes with a 3-scale search")
+    scale.add_argument(
+        "--scale-filter", action="store_true", help="Estimate scale with an fDSST-style scale filter (experimental)"
+    )
     background = parser.add_mutually_exclusive_group()
     background.add_argument(
         "--use-debackground", action="store_true", help="Suppress background before feature extraction"
@@ -95,6 +99,7 @@ def main(args):
             use_color_model=args.use_color_model,
             color_weight_floor=args.color_weight_floor,
             color_merge_factor=args.color_merge,
+            scale_filter=args.scale_filter,
             recovery=args.recovery,
         )
         colors = {"tracking": (0, 255, 255), "uncertain": (0, 165, 255), "lost": (0, 0, 255)}
