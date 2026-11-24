@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for AI coding agents working in this repository. The README and CONTRIBUTING are written in Chinese (Traditional); this file summarizes the parts that matter for code changes.
+Guidance for AI coding agents working in this repository. README.md is in English (README_CH.md is the Traditional Chinese version); CONTRIBUTING.md is in Traditional Chinese. This file summarizes the parts that matter for code changes.
 
 ## Project
 
