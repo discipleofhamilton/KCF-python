@@ -27,21 +27,18 @@ import numpy as np
 
 from kcf_tracker.tracker import KCFTracker
 
+_COLOR = dict(hog=True, fixed_window=True, use_color_model=True)
 CONFIGS = {
     "gray": dict(hog=False, fixed_window=True, multiscale=False),
     "hog": dict(hog=True, fixed_window=True, multiscale=False),
     "hog_ms": dict(hog=True, fixed_window=True, multiscale=True),
-    "hog_ms_color": dict(hog=True, fixed_window=True, multiscale=True, use_color_model=True),
+    "hog_ms_color": dict(_COLOR, multiscale=True),
+    # fDSST scale filter in place of the 3-scale search.
     "hog_sf": dict(hog=True, fixed_window=True, scale_filter=True),
-    "hog_sf_color": dict(hog=True, fixed_window=True, scale_filter=True, use_color_model=True),
-    "sf_c_n13": dict(hog=True, scale_filter=dict(n_scales=13, n_interp=25), use_color_model=True),
-    "sf_c_lr015": dict(hog=True, scale_filter=dict(learning_rate=0.015), use_color_model=True),
-    "sf_c_a256": dict(hog=True, scale_filter=dict(max_area=256), use_color_model=True),
-    "sf_c_lr04": dict(hog=True, scale_filter=dict(learning_rate=0.04), use_color_model=True),
-    "hog_sf2": dict(hog=True, fixed_window=True, scale_filter=True, scale_filter_reuse=False),
-    "hog_sf2_color": dict(
-        hog=True, fixed_window=True, scale_filter=True, scale_filter_reuse=False, use_color_model=True
-    ),
+    "hog_sf_color": dict(_COLOR, scale_filter=True),
+    # Confidence-gated updates and re-detection.
+    "hog_ms_color_rec": dict(_COLOR, multiscale=True, recovery=True),
+    "hog_sf_color_rec": dict(_COLOR, scale_filter=True, recovery=True),
 }
 
 

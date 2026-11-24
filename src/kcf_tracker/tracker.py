@@ -20,6 +20,12 @@ class KCFTracker:
         color_merge_factor: float = 0.3,
         scale_filter: bool | dict = False,
         scale_filter_reuse: bool = True,
+        recovery: bool = False,
+        peak_ratio: float = 0.5,
+        apce_ratio: float = 0.4,
+        redetect_factor: float = 2.0,
+        max_lost_frames: int | None = None,
+        confidence_rate: float = 0.02,
     ):
         if use_debackground and use_color_model:
             raise ValueError("use_debackground and use_color_model are mutually exclusive")
@@ -27,6 +33,8 @@ class KCFTracker:
             raise ValueError("color_weight_floor must be in [0, 1]")
         if not 0.0 <= color_merge_factor <= 1.0:
             raise ValueError("color_merge_factor must be in [0, 1]")
+        if redetect_factor < 1.0:
+            raise ValueError("redetect_factor must be at least 1")
         self.lambdar = 0.0001  # regularization
         self.padding = 2.5  # extra area surrounding the target
         self.output_sigma_factor = 0.125  # bandwidth of gaussian target
@@ -75,6 +83,22 @@ class KCFTracker:
         # benchmark the weight helped alone but hurt when combined with fusion, so it is opt-in.
         self.color_weight_floor = color_weight_floor
         self.color_merge_factor = color_merge_factor  # share of the color response; 0 disables fusion
+
+        # Confidence-gated updates and re-detection (LMCF-style). Off by default: the tracker then
+        # returns an empty box as soon as the peak drops below ``pv_thres``.
+        self.recovery = recovery
+        self.peak_ratio = peak_ratio  # confident if peak >= peak_ratio * running mean peak ...
+        self.apce_ratio = apce_ratio  # ... and APCE >= apce_ratio * running mean APCE
+        self.redetect_factor = redetect_factor  # re-detection region, in search windows per side
+        self.max_lost_frames = max_lost_frames  # None: keep searching forever
+        self.confidence_rate = confidence_rate  # learning rate of the running mean peak and APCE
+        self.state = "tracking"  # "tracking", "uncertain" (no model update) or "lost" (searching)
+        self.confidence = 1.0  # APCE of the last response relative to its running mean
+        self.peak_value = 0.0
+        self._mean_peak = None
+        self._mean_apce = None
+        self._lost_frames = 0
+        self._last_res = None
 
         self._tmpl_sz = [0, 0]  # cv::Size, [width,height]  #[int,int]
         self._roi = [0.0, 0.0, 0.0, 0.0]  # cv::Rect2f, [x,y,width,height]  #[float,float,float,float]
@@ -157,7 +181,7 @@ class KCFTracker:
         factor = 1.0 / (self._scale * scale_adjust)
         return self._roi[2] * factor, self._roi[3] * factor
 
-    def _features(self, image, inithann, scale_adjust=1.0, weighted=False):
+    def _features(self, image, inithann, scale_adjust=1.0, weighted=False, center=None):
         """Return the windowed feature map and the template-sized patch it came from.
 
         ``weighted`` multiplies in the soft color weight computed from this same patch. Only
@@ -171,8 +195,11 @@ class KCFTracker:
         testing the box drifted by more than 20 px. Grayscale tracking uses response fusion alone.
         """
         extracted_roi = [0, 0, 0, 0]  # [int,int,int,int]
-        cx = self._roi[0] + self._roi[2] / 2  # float
-        cy = self._roi[1] + self._roi[3] / 2  # float
+        if center is None:
+            cx = self._roi[0] + self._roi[2] / 2  # float
+            cy = self._roi[1] + self._roi[3] / 2  # float
+        else:
+            cx, cy = center
 
         if inithann:
             padded_w = self._roi[2] * self.padding
@@ -255,6 +282,7 @@ class KCFTracker:
                 patch, self._target_size_in_patch(scale_adjust), res.shape, self._feature_border()
             )
             res = (1 - self.color_merge_factor) * res + self.color_merge_factor * color
+        self._last_res = res
 
         _, pv, _, pi = cv2.minMaxLoc(res)  # pv:float  pi:tuple of int
         p = [float(pi[0]), float(pi[1])]  # cv::Point2f, [x,y]  #[float,float]
@@ -269,11 +297,18 @@ class KCFTracker:
 
         return p, pv
 
-    def _detect_at_scale(self, image, scale_adjust):
-        features, patch = self._features(image, 0, scale_adjust)
+    def _detect_at_scale(self, image, scale_adjust, center=None):
+        features, patch = self._features(image, 0, scale_adjust, center=center)
         if self._color is None:
             return self.detect(self._tmpl, features)
         return self.detect(self._tmpl, features, patch, scale_adjust)
+
+    @staticmethod
+    def apce(res):
+        """Average peak-to-correlation energy (Wang et al., LMCF): sharp single peaks score high."""
+        lo = float(res.min())
+        energy = float(np.mean((res - lo) ** 2))
+        return (float(res.max()) - lo) ** 2 / energy if energy > 1e-12 else 0.0
 
     def train(self, x, train_interp_factor):
         xf = self._spectrum(x)
@@ -302,9 +337,136 @@ class KCFTracker:
         self.train(self._tmpl, 1.0)
         if self._scale_filter is not None:
             self._scale_filter.init(image, self._center(), self._roi[2:])
+        self.state, self.confidence, self.peak_value = "tracking", 1.0, 1.0
+        self._mean_peak = self._mean_apce = None
+        self._lost_frames = 0
 
     def _center(self):
         return self._roi[0] + self._roi[2] / 2.0, self._roi[1] + self._roi[3] / 2.0
+
+    def _search(self, image, center):
+        """Detect at one or three scales around ``center``; return loc, peak, scale change, response."""
+        loc, peak_value = self._detect_at_scale(image, 1.0, center)
+        res = self._last_res
+        scale_adjust = 1.0
+
+        if self.scale_step != 1:
+            # Test at a smaller _scale
+            new_loc1, new_peak_value1 = self._detect_at_scale(image, 1.0 / self.scale_step, center)
+            res1 = self._last_res
+            # Test at a bigger _scale
+            new_loc2, new_peak_value2 = self._detect_at_scale(image, self.scale_step, center)
+            res2 = self._last_res
+
+            if self.scale_weight * new_peak_value1 > peak_value and new_peak_value1 > new_peak_value2:
+                loc, peak_value, res = new_loc1, new_peak_value1, res1
+                scale_adjust = 1.0 / self.scale_step
+            elif self.scale_weight * new_peak_value2 > peak_value:
+                loc, peak_value, res = new_loc2, new_peak_value2, res2
+                scale_adjust = self.scale_step
+        return loc, peak_value, scale_adjust, res
+
+    def _move(self, image, center, loc, scale_adjust=1.0):
+        cx, cy = center
+        self._scale *= scale_adjust
+        self._roi[2] *= scale_adjust
+        self._roi[3] *= scale_adjust
+        self._roi[0] = cx - self._roi[2] / 2.0 + loc[0] * self.cell_size * self._scale
+        self._roi[1] = cy - self._roi[3] / 2.0 + loc[1] * self.cell_size * self._scale
+        self._clamp_position(image)
+
+    def _clamp_position(self, image):
+        if self._roi[0] >= image.shape[1] - 1:
+            self._roi[0] = image.shape[1] - 1
+        if self._roi[1] >= image.shape[0] - 1:
+            self._roi[1] = image.shape[0] - 1
+        if self._roi[0] + self._roi[2] <= 0:
+            self._roi[0] = -self._roi[2] + 2
+        if self._roi[1] + self._roi[3] <= 0:
+            self._roi[1] = -self._roi[3] + 2
+        assert self._roi[2] > 0 and self._roi[3] > 0
+
+    def _estimate_scale(self, image):
+        """Apply the scale filter around the new position (no-op without ``scale_filter``)."""
+        if self._scale_filter is None:
+            return
+        center = self._center()
+        factor, self._scale_samples = self._scale_filter.estimate(image, center, self._roi[2:])
+        factor = self._clamp_scale(factor, image)
+        self._scale *= factor
+        self._roi[2] *= factor
+        self._roi[3] *= factor
+        self._roi[0] = center[0] - self._roi[2] / 2.0
+        self._roi[1] = center[1] - self._roi[3] / 2.0
+        self._clamp_position(image)
+
+    def _learn(self, image):
+        if self._color is not None:
+            self._color.update(image, self._roi)
+        x, _ = self._features(image, 0, 1.0, weighted=True)
+        self.train(x, self.interp_factor)
+        if self._scale_filter is not None:
+            xs = self._scale_samples if self._scale_filter_reuse else None
+            self._scale_filter.update(image, self._center(), self._roi[2:], xs)
+
+    def _confident(self, peak_value, apce):
+        if self._mean_peak is None:
+            return True
+        return peak_value >= self.peak_ratio * self._mean_peak and apce >= self.apce_ratio * self._mean_apce
+
+    def _redetection_candidates(self, image):
+        """Search centres tiling ``redetect_factor`` windows per side, plus color-likelihood peaks."""
+        cx, cy = self._center()
+        win_w = self._scale * self._tmpl_sz[0]
+        win_h = self._scale * self._tmpl_sz[1]
+        step = (self.redetect_factor - 1.0) / 2.0
+        candidates = []
+        if step > 0:
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dx or dy:
+                        candidates.append((cx + dx * step * win_w, cy + dy * step * win_h))
+        if self._color is not None:
+            f = self.redetect_factor
+            region = [int(cx - f * win_w / 2), int(cy - f * win_h / 2), int(f * win_w), int(f * win_h)]
+            patch = recttool.subwindow(image, region, border_type=cv2.BORDER_REPLICATE)
+            size = (max(1, int(f * self._tmpl_sz[0])), max(1, int(f * self._tmpl_sz[1])))
+            patch = cv2.resize(patch, size)
+            sx, sy = region[2] / size[0], region[3] / size[1]
+            tw = int(np.clip(round(self._roi[2] / sx), 1, size[0]))
+            th = int(np.clip(round(self._roi[3] / sy), 1, size[1]))
+            score = cv2.boxFilter(self._color.likelihood(patch), -1, (tw, th), borderType=cv2.BORDER_REPLICATE)
+            k = max(3, min(tw, th) | 1)
+            peaks = (score >= cv2.dilate(score, np.ones((k, k), np.uint8))) & (score > 0.5)
+            ys, xs = np.nonzero(peaks)
+            for j in np.argsort(-score[ys, xs])[:3]:
+                candidates.append((region[0] + (xs[j] + 0.5) * sx, region[1] + (ys[j] + 0.5) * sy))
+        height, width = image.shape[:2]
+        return [(float(np.clip(x, 0, width - 1)), float(np.clip(y, 0, height - 1))) for x, y in candidates]
+
+    def _redetect(self, image, floor=0.0):
+        """Run the filter at each candidate centre; return the best acceptable (center, loc, peak)."""
+        best = None
+        for center in self._redetection_candidates(image):
+            loc, peak_value = self._detect_at_scale(image, 1.0, center)
+            if best is None or peak_value > best[2]:
+                best = (center, loc, peak_value)
+        floor = max(floor, self.pv_thres)
+        if best is None or best[2] < floor:
+            return None
+        # Re-centre on the candidate peak so the cosine window does not attenuate it, then verify.
+        center, loc = best[0], best[1]
+        step = self.cell_size * self._scale
+        height, width = image.shape[:2]
+        center = (
+            float(np.clip(center[0] + loc[0] * step, 0, width - 1)),
+            float(np.clip(center[1] + loc[1] * step, 0, height - 1)),
+        )
+        loc, peak_value = self._detect_at_scale(image, 1.0, center)
+        apce = self.apce(self._last_res)
+        if peak_value <= floor or not self._confident(peak_value, apce):
+            return None
+        return center, loc, peak_value
 
     def update(self, image):
         if self._tmpl is None:
@@ -318,64 +480,49 @@ class KCFTracker:
         if self._roi[1] >= image.shape[0] - 1:
             self._roi[1] = image.shape[0] - 2
 
-        cx = self._roi[0] + self._roi[2] / 2.0
-        cy = self._roi[1] + self._roi[3] / 2.0
+        center = self._center()
+        loc, peak_value, scale_adjust, res = self._search(image, center)
+        self.peak_value = peak_value
+        if not self.recovery:
+            if peak_value < self.pv_thres:
+                return [0.0, 0.0, 0.0, 0.0]
+            self._move(image, center, loc, scale_adjust)
+            self._estimate_scale(image)
+            self._learn(image)
+            return self._roi
 
-        loc, peak_value = self._detect_at_scale(image, 1.0)
-        scale_adjust = 1.0
+        apce = self.apce(res)
+        self.confidence = apce / self._mean_apce if self._mean_apce else 1.0
+        if peak_value >= self.pv_thres:
+            self._move(image, center, loc, scale_adjust)
+            self._estimate_scale(image)
+            if self._confident(peak_value, apce):
+                self.state = "tracking"
+                self._lost_frames = 0
+                if self._mean_peak is None:
+                    self._mean_peak, self._mean_apce = peak_value, apce
+                else:
+                    self._mean_peak += self.confidence_rate * (peak_value - self._mean_peak)
+                    self._mean_apce += self.confidence_rate * (apce - self._mean_apce)
+                self._learn(image)
+            else:
+                # Occlusion or distraction is likely: follow the peak but keep the model clean.
+                self.state = "uncertain"
+            return self._roi
 
-        if self.scale_step != 1:
-            # Test at a smaller _scale
-            new_loc1, new_peak_value1 = self._detect_at_scale(image, 1.0 / self.scale_step)
-            # Test at a bigger _scale
-            new_loc2, new_peak_value2 = self._detect_at_scale(image, self.scale_step)
+        found = self._redetect(image)
+        if found is not None:
+            found_center, loc, self.peak_value = found
+            self._move(image, found_center, loc)
+            self.state = "uncertain"
+            self._lost_frames = 0
+            return self._roi
 
-            if self.scale_weight * new_peak_value1 > peak_value and new_peak_value1 > new_peak_value2:
-                loc = new_loc1
-                peak_value = new_peak_value1
-                scale_adjust = 1.0 / self.scale_step
-            elif self.scale_weight * new_peak_value2 > peak_value:
-                loc = new_loc2
-                peak_value = new_peak_value2
-                scale_adjust = self.scale_step
-
-        if peak_value < self.pv_thres:
+        # Hold the last position and keep searching around it.
+        self.state = "lost"
+        self._lost_frames += 1
+        if self.max_lost_frames is not None and self._lost_frames > self.max_lost_frames:
             return [0.0, 0.0, 0.0, 0.0]
-
-        self._scale *= scale_adjust
-        self._roi[2] *= scale_adjust
-        self._roi[3] *= scale_adjust
-        self._roi[0] = cx - self._roi[2] / 2.0 + loc[0] * self.cell_size * self._scale
-        self._roi[1] = cy - self._roi[3] / 2.0 + loc[1] * self.cell_size * self._scale
-
-        if self._scale_filter is not None:
-            center = self._center()
-            factor, self._scale_samples = self._scale_filter.estimate(image, center, self._roi[2:])
-            factor = self._clamp_scale(factor, image)
-            self._scale *= factor
-            self._roi[2] *= factor
-            self._roi[3] *= factor
-            self._roi[0] = center[0] - self._roi[2] / 2.0
-            self._roi[1] = center[1] - self._roi[3] / 2.0
-
-        if self._roi[0] >= image.shape[1] - 1:
-            self._roi[0] = image.shape[1] - 1
-        if self._roi[1] >= image.shape[0] - 1:
-            self._roi[1] = image.shape[0] - 1
-        if self._roi[0] + self._roi[2] <= 0:
-            self._roi[0] = -self._roi[2] + 2
-        if self._roi[1] + self._roi[3] <= 0:
-            self._roi[1] = -self._roi[3] + 2
-        assert self._roi[2] > 0 and self._roi[3] > 0
-
-        if self._color is not None:
-            self._color.update(image, self._roi)
-        x, _ = self._features(image, 0, 1.0, weighted=True)
-        self.train(x, self.interp_factor)
-        if self._scale_filter is not None:
-            xs = self._scale_samples if self._scale_filter_reuse else None
-            self._scale_filter.update(image, self._center(), self._roi[2:], xs)
-
         return self._roi
 
     def _clamp_scale(self, factor, image):
