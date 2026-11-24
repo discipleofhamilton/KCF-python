@@ -25,7 +25,7 @@ uv run --locked pytest tests/test_tracking.py::test_recovery_gives_up_after_max_
 uv run --locked pytest tests/test_tracking.py -k scale_filter
 
 # Run the tracker (needs a display; first frame pauses for mouse ROI selection)
-uv run --locked kcf-track --source samples/videos/sintel_20s.mp4 --use-hog --multiscale --use-color-model
+uv run --locked kcf-track --source path/to/video.mp4 --use-hog --multiscale --use-color-model
 uv run --locked kcf-debackground --source 0 --size 40 30
 
 # Offline benchmark (VOT2016 data goes to benchmarks/data/, which is gitignored)

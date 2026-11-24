@@ -59,16 +59,16 @@ uv run --locked kcf-track
 uv run --locked kcf-track --source 2 --use-hog --multiscale
 
 # 影片與背景去除
-uv run --locked kcf-track --source samples/videos/big_buck_bunny_20s.mp4 --use-hog --use-debackground
+uv run --locked kcf-track --source path/to/video.mp4 --use-hog --use-debackground
 
 # 色彩直方圖前景模型（建議取代 --use-debackground）
-uv run --locked kcf-track --source samples/videos/sintel_20s.mp4 --use-hog --multiscale --use-color-model
+uv run --locked kcf-track --source path/to/video.mp4 --use-hog --multiscale --use-color-model
 
 # 建議組合：HOG＋多尺度＋色彩模型＋信心門控與重新偵測
-uv run --locked kcf-track --source samples/videos/big_buck_bunny_20s.mp4 --use-hog --multiscale --use-color-model --recovery
+uv run --locked kcf-track --source path/to/video.mp4 --use-hog --multiscale --use-color-model --recovery
 
 # 也可透過套件入口執行
-uv run --locked python -m kcf_tracker --source samples/videos/sintel_20s.mp4
+uv run --locked python -m kcf_tracker --source path/to/video.mp4
 ```
 
 操作：第一幀暫停，左鍵拖曳框選目標後，按任意鍵開始播放；`q`／`Esc` 直接離開。
@@ -108,9 +108,6 @@ reset 失敗由 54 次降到 49 次，速度由 236 提升到 401 FPS（Apple M2
 
 不支援自動物件分類、圖片資料夾序列載入或同時追蹤多個目標。
 
-專案附帶三部各 20 秒的測試片段，存於 `samples/videos/`，合計約 4 MB。
-使用方式、原片範圍、來源與授權見 [測試影片說明](samples/videos/README.md)。
-
 背景去除與前景擷取也能獨立操作：
 
 ```sh
@@ -140,7 +137,6 @@ uv run --locked python -m kcf_tracker.foreground_filter ./input_image.jpg
 | `src/kcf_tracker/foreground_filter.py` | 獨立的 Otsu／最大輪廓前景擷取 |
 | `src/kcf_tracker/utils.py` | 遮罩運算、距離與計時工具 |
 | `tests/` | 合成影像追蹤、特徵運算與 CLI 回歸測試 |
-| `samples/videos/` | 三部可直接載入的短片與來源／授權說明 |
 | `benchmarks/` | VOT2016 資料下載、OPE／reset 評估與結果說明 |
 | `docker/` | 多平台（linux/amd64、linux/arm64）測試映像與腳本 |
 
