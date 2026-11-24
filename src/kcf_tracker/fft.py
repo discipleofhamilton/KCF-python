@@ -49,3 +49,16 @@ def rearrange(img):
         img[0:yh, xh : img.shape[1]],
     )
     return img_
+
+
+def rfft2(x):
+    """Half-spectrum 2-D FFT over the last two axes, batched over any leading (channel) axis.
+
+    One call transforms every feature channel; float32 input yields complex64 (numpy >= 2).
+    """
+    return np.fft.rfft2(x)
+
+
+def irfft2(xf, shape):
+    """Inverse of :func:`rfft2` for a real signal of spatial ``shape`` (rows, cols)."""
+    return np.fft.irfft2(xf, s=shape)

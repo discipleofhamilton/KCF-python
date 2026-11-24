@@ -7,27 +7,26 @@ NUM_SECTOR = 9
 FLT_EPSILON = 1e-07
 
 
-@nb.jit(nopython=True)
+@nb.njit(cache=True)
 def func1(dx, dy, boundary_x, boundary_y, height, width, num_channels):
     r = np.zeros((height, width), dtype="float32")
-    alfa = np.zeros((height, width, 2), dtype="int")
+    alfa = np.zeros((height, width, 2), dtype=np.uint8)
 
     for j in range(1, height - 1):
         for i in range(1, width - 1):
-            c = 0
-            x = dx[j, i, c]
-            y = dy[j, i, c]
-            r[j, i] = np.sqrt(x * x + y * y)
-
+            # Pick the channel with the strongest gradient by squared magnitude; one sqrt per pixel.
+            x = dx[j, i, 0]
+            y = dy[j, i, 0]
+            best = x * x + y * y
             for ch in range(1, num_channels):
                 tx = dx[j, i, ch]
                 ty = dy[j, i, ch]
-                magnitude = np.sqrt(tx * tx + ty * ty)
-                if magnitude > r[j, i]:
-                    r[j, i] = magnitude
-                    c = ch
+                sq = tx * tx + ty * ty
+                if sq > best:
+                    best = sq
                     x = tx
                     y = ty
+            r[j, i] = np.sqrt(best)
 
             mmax = boundary_x[0] * x + boundary_y[0] * y
             maxi = 0
@@ -43,10 +42,10 @@ def func1(dx, dy, boundary_x, boundary_y, height, width, num_channels):
 
             alfa[j, i, 0] = maxi % NUM_SECTOR
             alfa[j, i, 1] = maxi
-    return r, alfa.astype("uint8")
+    return r, alfa
 
 
-@nb.jit(nopython=True)
+@nb.njit(cache=True)
 def func2(dx, dy, boundary_x, boundary_y, r, alfa, nearest, w, k, height, width, size_x, size_y, p, string_size):
     mapp = np.zeros((size_x * size_y * p), dtype=np.float32)
 
@@ -95,65 +94,37 @@ def func2(dx, dy, boundary_x, boundary_y, r, alfa, nearest, w, k, height, width,
     return mapp
 
 
-@nb.jit(nopython=True)
+@nb.njit(cache=True)
 def func3(part_of_norm, mappmap, size_x, size_y, p, xp, pp):
+    # Each cell's 27 orientation bins are normalized by its four 2x2 block energies; plain loops
+    # avoid the temporary arrays that slice division allocates per cell.
     new_data = np.zeros((size_y * size_x * pp), np.float32)
+    stride = size_x + 2
     for i in range(1, size_y + 1):
         for j in range(1, size_x + 1):
-            pos1 = i * (size_x + 2) * xp + j * xp
+            pos1 = i * stride * xp + j * xp
             pos2 = (i - 1) * size_x * pp + (j - 1) * pp
-
-            val_of_norm = (
-                np.sqrt(
-                    part_of_norm[(i) * (size_x + 2) + (j)]
-                    + part_of_norm[(i) * (size_x + 2) + (j + 1)]
-                    + part_of_norm[(i + 1) * (size_x + 2) + (j)]
-                    + part_of_norm[(i + 1) * (size_x + 2) + (j + 1)]
+            c = part_of_norm[i * stride + j]
+            for b in range(4):
+                di = 1 if b == 0 or b == 2 else -1
+                dj = 1 if b < 2 else -1
+                val_of_norm = (
+                    np.sqrt(
+                        c
+                        + part_of_norm[i * stride + j + dj]
+                        + part_of_norm[(i + di) * stride + j]
+                        + part_of_norm[(i + di) * stride + j + dj]
+                    )
+                    + FLT_EPSILON
                 )
-                + FLT_EPSILON
-            )
-            new_data[pos2 : pos2 + p] = mappmap[pos1 : pos1 + p] / val_of_norm
-            new_data[pos2 + 4 * p : pos2 + 6 * p] = mappmap[pos1 + p : pos1 + 3 * p] / val_of_norm
-
-            val_of_norm = (
-                np.sqrt(
-                    part_of_norm[(i) * (size_x + 2) + (j)]
-                    + part_of_norm[(i) * (size_x + 2) + (j + 1)]
-                    + part_of_norm[(i - 1) * (size_x + 2) + (j)]
-                    + part_of_norm[(i - 1) * (size_x + 2) + (j + 1)]
-                )
-                + FLT_EPSILON
-            )
-            new_data[pos2 + p : pos2 + 2 * p] = mappmap[pos1 : pos1 + p] / val_of_norm
-            new_data[pos2 + 6 * p : pos2 + 8 * p] = mappmap[pos1 + p : pos1 + 3 * p] / val_of_norm
-
-            val_of_norm = (
-                np.sqrt(
-                    part_of_norm[(i) * (size_x + 2) + (j)]
-                    + part_of_norm[(i) * (size_x + 2) + (j - 1)]
-                    + part_of_norm[(i + 1) * (size_x + 2) + (j)]
-                    + part_of_norm[(i + 1) * (size_x + 2) + (j - 1)]
-                )
-                + FLT_EPSILON
-            )
-            new_data[pos2 + 2 * p : pos2 + 3 * p] = mappmap[pos1 : pos1 + p] / val_of_norm
-            new_data[pos2 + 8 * p : pos2 + 10 * p] = mappmap[pos1 + p : pos1 + 3 * p] / val_of_norm
-
-            val_of_norm = (
-                np.sqrt(
-                    part_of_norm[(i) * (size_x + 2) + (j)]
-                    + part_of_norm[(i) * (size_x + 2) + (j - 1)]
-                    + part_of_norm[(i - 1) * (size_x + 2) + (j)]
-                    + part_of_norm[(i - 1) * (size_x + 2) + (j - 1)]
-                )
-                + FLT_EPSILON
-            )
-            new_data[pos2 + 3 * p : pos2 + 4 * p] = mappmap[pos1 : pos1 + p] / val_of_norm
-            new_data[pos2 + 10 * p : pos2 + 12 * p] = mappmap[pos1 + p : pos1 + 3 * p] / val_of_norm
+                for t in range(p):
+                    new_data[pos2 + b * p + t] = mappmap[pos1 + t] / val_of_norm
+                for t in range(2 * p):
+                    new_data[pos2 + 4 * p + b * 2 * p + t] = mappmap[pos1 + p + t] / val_of_norm
     return new_data
 
 
-@nb.jit(nopython=True)
+@nb.njit(cache=True)
 def func4(mappmap, p, size_x, size_y, pp, yp, xp, nx, ny):
     new_data = np.zeros((size_x * size_y * pp), np.float32)
     for i in range(size_y):
@@ -191,8 +162,9 @@ def get_feature_maps(image, k, mapp):
     mapp["num_features"] = p
     mapp["map"] = np.zeros(int(mapp["size_x"] * mapp["size_y"] * mapp["num_features"]), dtype=np.float32)
 
-    dx = cv2.filter2D(np.float32(image), -1, kernel)  # np.float32(...) is necessary
-    dy = cv2.filter2D(np.float32(image), -1, kernel.T)
+    image_f = np.float32(image)  # float input is necessary for signed gradients
+    dx = cv2.filter2D(image_f, -1, kernel)
+    dy = cv2.filter2D(image_f, -1, kernel.T)
 
     arg_vector = np.arange(NUM_SECTOR + 1).astype(np.float32) * np.pi / NUM_SECTOR
     boundary_x = np.cos(arg_vector)
@@ -210,8 +182,8 @@ def get_feature_maps(image, k, mapp):
     w[:, 1] = 1.0 / b_x * ((a_x * b_x) / (a_x + b_x))
 
     mapp["map"] = func2(
-        dx.astype(np.int8),
-        dy.astype(np.int8),
+        dx,  # unused by func2; passed as-is to avoid two full-image int8 copies
+        dy,
         boundary_x,
         boundary_y,
         r,
@@ -238,17 +210,15 @@ def normalize_and_truncate(mapp, alfa):
     xp = NUM_SECTOR * 3
     pp = NUM_SECTOR * 12
 
-    idx = np.arange(0, size_x * size_y * mapp["num_features"], mapp["num_features"]).reshape(
-        (size_x * size_y, 1)
-    ) + np.arange(p)
-    part_of_norm = np.sum(mapp["map"][idx] ** 2, axis=1)  ### ~0.0002s
+    cells = mapp["map"].reshape((size_x * size_y, mapp["num_features"]))[:, :p]
+    part_of_norm = np.sum(cells * cells, axis=1)
 
     size_x, size_y = size_x - 2, size_y - 2
 
     new_data = func3(part_of_norm, mapp["map"], size_x, size_y, p, xp, pp)  # with @jit
 
     # truncation
-    new_data[new_data > alfa] = alfa
+    np.minimum(new_data, np.float32(alfa), out=new_data)
 
     mapp["num_features"] = pp
     mapp["size_x"] = size_x

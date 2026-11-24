@@ -9,3 +9,4 @@ dist/
 .uv-cache/
 *.nbc
 *.nbi
+benchmarks/data/

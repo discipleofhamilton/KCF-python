@@ -47,8 +47,37 @@ def parse_arguments(argv=None):
     parser.add_argument("--use-hog", action="store_true", help="Use HOG rather than grayscale features")
     parser.add_argument("--fixed-window", action="store_true", help="Use a fixed template size")
     parser.add_argument("--multiscale", action="store_true", help="Estimate target scale changes")
-    parser.add_argument("--use-debackground", action="store_true", help="Suppress background before feature extraction")
-    return parser.parse_args(argv)
+    background = parser.add_mutually_exclusive_group()
+    background.add_argument(
+        "--use-debackground", action="store_true", help="Suppress background before feature extraction"
+    )
+    background.add_argument(
+        "--use-color-model",
+        action="store_true",
+        help="Weight features and fuse responses with a color-histogram foreground model",
+    )
+    parser.add_argument(
+        "--color-weight-floor",
+        type=float,
+        default=1.0,
+        help="HOG feature weight of pure background with --use-color-model, e.g. 0.6; 1 disables (default: 1)",
+    )
+    parser.add_argument(
+        "--color-merge",
+        type=float,
+        default=0.3,
+        help="Share of the color response in the fused response; 0 disables fusion (default: 0.3)",
+    )
+    parser.add_argument(
+        "--recovery",
+        action="store_true",
+        help="Skip model updates on low confidence and re-detect a lost target instead of stopping",
+    )
+    args = parser.parse_args(argv)
+    for name in ("color_weight_floor", "color_merge"):
+        if not 0.0 <= getattr(args, name) <= 1.0:
+            parser.error(f"--{name.replace('_', '-')} must be in [0, 1]")
+    return args
 
 
 def main(args):
@@ -63,7 +92,12 @@ def main(args):
             fixed_window=args.fixed_window,
             multiscale=args.multiscale,
             use_debackground=args.use_debackground,
+            use_color_model=args.use_color_model,
+            color_weight_floor=args.color_weight_floor,
+            color_merge_factor=args.color_merge,
+            recovery=args.recovery,
         )
+        colors = {"tracking": (0, 255, 255), "uncertain": (0, 165, 255), "lost": (0, 0, 255)}
         selection = Selection()
         duration = 0.01
         first_frame = True
@@ -93,7 +127,10 @@ def main(args):
                     selection.on_tracking = False
                 else:
                     x, y, width, height = map(int, box)
-                    cv2.rectangle(frame, (x, y), (x + width, y + height), (0, 255, 255), 1)
+                    color = colors.get(tracker.state, colors["tracking"])
+                    cv2.rectangle(frame, (x, y), (x + width, y + height), color, 1)
+                    if tracker.state == "lost":
+                        cv2.putText(frame, "searching", (x, y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
                 cv2.putText(frame, f"FPS: {1 / duration:.1f}", (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             cv2.imshow("tracking", frame)
             if cv2.waitKey(interval) & 0xFF in (27, ord("q")):
