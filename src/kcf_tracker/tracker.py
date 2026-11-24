@@ -314,7 +314,7 @@ class KCFTracker:
         xf = self._spectrum(x)
         k = self._kernel(xf, float(np.sum(x * x)))
         # The original packed-complex code added lambdar to both the real and imaginary parts;
-        # kept for bit-for-bit comparable behaviour.
+        # kept so results stay comparable with the original (equal up to float rounding).
         alphaf = self._prob / (fft.rfft2(k) + self.lambdar * (1 + 1j))
 
         a = train_interp_factor
@@ -494,9 +494,13 @@ class KCFTracker:
         apce = self.apce(res)
         self.confidence = apce / self._mean_apce if self._mean_apce else 1.0
         if peak_value >= self.pv_thres:
+            confident = self._confident(peak_value, apce)
+            # The 3-scale search measures ``loc`` at the chosen scale, so the two stay together. The
+            # separate scale filter is skipped on uncertain frames (e.g. occlusion), so the box does
+            # not shrink or grow toward an occluder.
             self._move(image, center, loc, scale_adjust)
-            self._estimate_scale(image)
-            if self._confident(peak_value, apce):
+            if confident:
+                self._estimate_scale(image)
                 self.state = "tracking"
                 self._lost_frames = 0
                 if self._mean_peak is None:
