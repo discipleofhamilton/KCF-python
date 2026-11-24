@@ -3,6 +3,7 @@ import numpy as np
 
 from . import fft, fhog, recttool
 from .color_model import ColorHistogramModel
+from .scale_filter import ScaleFilter
 
 
 # KCF tracker
@@ -17,6 +18,8 @@ class KCFTracker:
         use_color_model: bool = False,
         color_weight_floor: float = 1.0,
         color_merge_factor: float = 0.3,
+        scale_filter: bool | dict = False,
+        scale_filter_reuse: bool = True,
     ):
         if use_debackground and use_color_model:
             raise ValueError("use_debackground and use_color_model are mutually exclusive")
@@ -42,7 +45,19 @@ class KCFTracker:
             self.cell_size = 1
             self._hogfeatures = False
 
-        if multiscale:
+        # fDSST-style scale estimation: one translation detection at the current scale, then a 1-D
+        # scale correlation filter. It replaces the 3-scale search of ``multiscale``.
+        # ``scale_filter`` may be a dict of ScaleFilter keyword arguments.
+        sf_kwargs = scale_filter if isinstance(scale_filter, dict) else {}
+        self._scale_filter = ScaleFilter(**sf_kwargs) if scale_filter else None
+        # Train the scale filter on the samples it just detected on (at the pre-update scale)
+        # instead of extracting them again: halves its cost, at a slight lag in scale adaptation.
+        self._scale_filter_reuse = scale_filter_reuse
+        self._scale_samples = None
+        if scale_filter:
+            self.template_size = 96
+            self.scale_step = 1
+        elif multiscale:
             self.template_size = 96  # template size
             self.scale_step = 1.05  # scale step for multi-scale estimation
             self.scale_weight = 0.96  # to downweight detection scores of other scales for added stability
@@ -285,6 +300,11 @@ class KCFTracker:
         self._alphaf = np.zeros_like(self._prob)
         self._tmpl_f = np.zeros_like(self._spectrum(self._tmpl))
         self.train(self._tmpl, 1.0)
+        if self._scale_filter is not None:
+            self._scale_filter.init(image, self._center(), self._roi[2:])
+
+    def _center(self):
+        return self._roi[0] + self._roi[2] / 2.0, self._roi[1] + self._roi[3] / 2.0
 
     def update(self, image):
         if self._tmpl is None:
@@ -328,6 +348,16 @@ class KCFTracker:
         self._roi[0] = cx - self._roi[2] / 2.0 + loc[0] * self.cell_size * self._scale
         self._roi[1] = cy - self._roi[3] / 2.0 + loc[1] * self.cell_size * self._scale
 
+        if self._scale_filter is not None:
+            center = self._center()
+            factor, self._scale_samples = self._scale_filter.estimate(image, center, self._roi[2:])
+            factor = self._clamp_scale(factor, image)
+            self._scale *= factor
+            self._roi[2] *= factor
+            self._roi[3] *= factor
+            self._roi[0] = center[0] - self._roi[2] / 2.0
+            self._roi[1] = center[1] - self._roi[3] / 2.0
+
         if self._roi[0] >= image.shape[1] - 1:
             self._roi[0] = image.shape[1] - 1
         if self._roi[1] >= image.shape[0] - 1:
@@ -342,5 +372,15 @@ class KCFTracker:
             self._color.update(image, self._roi)
         x, _ = self._features(image, 0, 1.0, weighted=True)
         self.train(x, self.interp_factor)
+        if self._scale_filter is not None:
+            xs = self._scale_samples if self._scale_filter_reuse else None
+            self._scale_filter.update(image, self._center(), self._roi[2:], xs)
 
         return self._roi
+
+    def _clamp_scale(self, factor, image):
+        """Keep the box between 5 px and the image size on its short and long sides."""
+        w, h = self._roi[2], self._roi[3]
+        lo = 5.0 / min(w, h)
+        hi = min(image.shape[1] / w, image.shape[0] / h)
+        return float(np.clip(factor, lo, max(lo, hi)))

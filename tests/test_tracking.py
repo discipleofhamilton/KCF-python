@@ -5,12 +5,13 @@ from kcf_tracker.tracker import KCFTracker
 
 
 @pytest.mark.parametrize("hog", [False, True])
-@pytest.mark.parametrize("multiscale", [False, True])
+@pytest.mark.parametrize("multiscale", [False, True, "scale_filter"])
 @pytest.mark.parametrize("use_debackground", [False, True])
 def test_tracks_translated_target(hog, multiscale, use_debackground):
     rng = np.random.default_rng(42)
     target = rng.integers(40, 240, (48, 48, 3), dtype=np.uint8)
-    tracker = KCFTracker(hog=hog, fixed_window=True, multiscale=multiscale, use_debackground=use_debackground)
+    scale = {"multiscale": multiscale} if isinstance(multiscale, bool) else {"scale_filter": True}
+    tracker = KCFTracker(hog=hog, fixed_window=True, use_debackground=use_debackground, **scale)
     frame = np.zeros((180, 240, 3), dtype=np.uint8)
     frame[60:108, 80:128] = target
     tracker.init([80, 60, 48, 48], frame)
@@ -83,3 +84,31 @@ def test_fourier_domain_correlation_matches_per_channel_reference():
     # The cached template spectrum must equal a fresh transform after a training update.
     tracker.train(x, 0.3)
     np.testing.assert_allclose(tracker._tmpl_f, tracker._spectrum(tracker._tmpl), rtol=1e-4, atol=1e-3)
+
+
+@pytest.mark.parametrize("use_color_model", [False, True])
+def test_scale_filter_follows_scale_change(use_color_model):
+    import cv2
+
+    rng = np.random.default_rng(0)
+    texture = cv2.resize(rng.integers(0, 255, (12, 12, 3), dtype=np.uint8), (64, 64), interpolation=cv2.INTER_NEAREST)
+    background = rng.integers(0, 60, (240, 320, 3), dtype=np.uint8)
+
+    def frame(scale):
+        image = background.copy()
+        size = int(round(64 * scale))
+        x, y = 160 - size // 2, 120 - size // 2
+        image[y : y + size, x : x + size] = cv2.resize(texture, (size, size))
+        return image, [x, y, size, size]
+
+    tracker = KCFTracker(hog=True, scale_filter=True, use_color_model=use_color_model)
+    tracker.init(*reversed(frame(1.0)))
+    for i in range(1, 31):
+        image, truth = frame(1.0 + 0.015 * i)
+        box = tracker.update(image)
+    assert box[2] == pytest.approx(truth[2], rel=0.08)
+    assert box[0] == pytest.approx(truth[0], abs=4)
+    for i in range(1, 31):
+        image, truth = frame(1.45 - 0.02 * i)
+        box = tracker.update(image)
+    assert box[2] == pytest.approx(truth[2], rel=0.08)
