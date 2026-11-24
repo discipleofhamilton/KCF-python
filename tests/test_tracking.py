@@ -52,3 +52,34 @@ def test_invalid_roi(roi):
 def test_update_requires_initialization():
     with pytest.raises(RuntimeError, match="Initialize"):
         KCFTracker().update(np.zeros((100, 100, 3), dtype=np.uint8))
+
+
+def _reference_correlation(tracker, x1, x2):
+    """The original per-channel cv2.dft gaussian correlation, kept as an oracle."""
+    import cv2
+
+    from kcf_tracker import fft
+
+    rows, cols, channels = tracker.size_patch
+    c = np.zeros((rows, cols), np.float64)
+    for i in range(channels):
+        a = cv2.dft(np.float64(x1[i].reshape(rows, cols)), flags=cv2.DFT_COMPLEX_OUTPUT)
+        b = cv2.dft(np.float64(x2[i].reshape(rows, cols)), flags=cv2.DFT_COMPLEX_OUTPUT)
+        c += cv2.dft(cv2.mulSpectrums(a, b, 0, conjB=True), flags=cv2.DFT_INVERSE | cv2.DFT_SCALE)[:, :, 0]
+    c = fft.rearrange(c)
+    d = (np.sum(x1 * x1) + np.sum(x2 * x2) - 2.0 * c) / (rows * cols * channels)
+    return np.exp(-np.maximum(d, 0) / (tracker.sigma * tracker.sigma))
+
+
+def test_fourier_domain_correlation_matches_per_channel_reference():
+    rng = np.random.default_rng(3)
+    image = rng.integers(0, 255, (160, 160, 3), dtype=np.uint8)
+    tracker = KCFTracker(hog=True)
+    tracker.init([50, 50, 48, 40], image)
+    x = tracker.get_features(np.roll(image, 3, axis=1), 0)
+    np.testing.assert_allclose(
+        tracker.gaussian_correlation(x, tracker._tmpl), _reference_correlation(tracker, x, tracker._tmpl), atol=1e-5
+    )
+    # The cached template spectrum must equal a fresh transform after a training update.
+    tracker.train(x, 0.3)
+    np.testing.assert_allclose(tracker._tmpl_f, tracker._spectrum(tracker._tmpl), rtol=1e-4, atol=1e-3)
