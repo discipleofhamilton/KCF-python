@@ -163,3 +163,16 @@ def test_recovery_gives_up_after_max_lost_frames():
 def test_recovery_rejects_invalid_options():
     with pytest.raises(ValueError, match="redetect_factor"):
         KCFTracker(recovery=True, redetect_factor=0.5)
+
+
+def test_recovery_keeps_scale_filter_size_on_uncertain_frames(monkeypatch):
+    target = np.random.default_rng(7).integers(40, 240, (40, 40, 3), dtype=np.uint8)
+    tracker = KCFTracker(hog=True, scale_filter=True, recovery=True)
+    tracker.init([100, 100, 40, 40], _scene((100, 100), target))
+    tracker.update(_scene((102, 100), target))
+    size = tracker._roi[2:]
+    monkeypatch.setattr(tracker, "_confident", lambda *args: False)
+    monkeypatch.setattr(tracker._scale_filter, "estimate", lambda *args: (1.5, None))
+    tracker.update(_scene((104, 100), target))
+    assert tracker.state == "uncertain"
+    assert tracker._roi[2:] == size
