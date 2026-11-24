@@ -75,3 +75,8 @@ def test_tracking_cli_color_model_options():
         cli.parse_arguments(["--use-color-model", "--use-debackground"])
     with pytest.raises(SystemExit):
         cli.parse_arguments(["--color-merge", "2"])
+
+
+def test_tracking_cli_recovery_option():
+    assert cli.parse_arguments(["--recovery"]).recovery
+    assert not cli.parse_arguments([]).recovery

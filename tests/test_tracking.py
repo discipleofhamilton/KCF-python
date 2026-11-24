@@ -112,3 +112,54 @@ def test_scale_filter_follows_scale_change(use_color_model):
         image, truth = frame(1.45 - 0.02 * i)
         box = tracker.update(image)
     assert box[2] == pytest.approx(truth[2], rel=0.08)
+
+
+def _scene(position, target, shape=(240, 320, 3)):
+    frame = np.full(shape, 60, dtype=np.uint8)
+    x, y = position
+    frame[y : y + target.shape[0], x : x + target.shape[1]] = target
+    return frame
+
+
+def test_recovery_holds_position_without_learning_when_target_disappears():
+    target = np.random.default_rng(7).integers(40, 240, (40, 40, 3), dtype=np.uint8)
+    tracker = KCFTracker(hog=True, multiscale=True, use_color_model=True, recovery=True)
+    tracker.init([100, 100, 40, 40], _scene((100, 100), target))
+    for _ in range(3):
+        tracker.update(_scene((100, 100), target))
+    assert tracker.state == "tracking"
+    template, roi = tracker._tmpl.copy(), list(tracker._roi)
+    box = tracker.update(np.full((240, 320, 3), 60, dtype=np.uint8))
+    assert tracker.state in ("uncertain", "lost")
+    assert box[2] > 0 and box[3] > 0  # keeps reporting a box instead of giving up
+    np.testing.assert_array_equal(tracker._tmpl, template)
+    assert box[:2] == pytest.approx(roi[:2], abs=8)
+
+
+@pytest.mark.parametrize("use_color_model", [False, True])
+def test_recovery_redetects_target_after_a_jump(use_color_model):
+    target = np.random.default_rng(3).integers(40, 240, (40, 40, 3), dtype=np.uint8)
+    tracker = KCFTracker(hog=True, multiscale=True, use_color_model=use_color_model, recovery=True)
+    tracker.init([60, 100, 40, 40], _scene((60, 100), target))
+    for _ in range(3):
+        tracker.update(_scene((60, 100), target))
+    # A 2-target-width jump: without recovery the tracker returns an empty box here.
+    for _ in range(3):
+        x, y, _, _ = tracker.update(_scene((140, 100), target))
+    assert x == pytest.approx(140, abs=6)
+    assert y == pytest.approx(100, abs=6)
+
+
+def test_recovery_gives_up_after_max_lost_frames():
+    target = np.random.default_rng(5).integers(40, 240, (40, 40, 3), dtype=np.uint8)
+    tracker = KCFTracker(hog=True, recovery=True, max_lost_frames=1)
+    tracker.init([100, 100, 40, 40], _scene((100, 100), target))
+    empty = np.random.default_rng(6).integers(0, 255, (240, 320, 3), dtype=np.uint8)
+    boxes = [tracker.update(empty) for _ in range(3)]
+    assert tracker.state == "lost"
+    assert boxes[-1] == [0, 0, 0, 0]
+
+
+def test_recovery_rejects_invalid_options():
+    with pytest.raises(ValueError, match="redetect_factor"):
+        KCFTracker(recovery=True, redetect_factor=0.5)
