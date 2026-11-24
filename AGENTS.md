@@ -30,7 +30,10 @@ uv run --locked kcf-debackground --source 0 --size 40 30
 
 # Offline benchmark (VOT2016 data goes to benchmarks/data/, which is gitignored)
 uv run --locked python benchmarks/fetch_vot.py --out benchmarks/data
-uv run --locked python benchmarks/evaluate.py --data benchmarks/data --configs hog hog_ms_color --json results.json
+uv run --locked python benchmarks/evaluate.py --data benchmarks/data/vot --video bag=benchmarks/data/pysot/bag.avi --configs hog_ms_color hog_ms_color_rec --json results.json
+
+# Multi-platform check in headless Linux containers (linux/arm64 and linux/amd64, Python 3.11 and 3.12)
+docker/run-tests.sh benchmarks/data
 ```
 
 - Manage deps with `uv add` / `uv remove`; never hand-edit `uv.lock` or use `--frozen` to hide drift.

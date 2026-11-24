@@ -2,12 +2,31 @@
 
 以 Python 實作 KCF（Kernelized Correlation Filters）單一物件追蹤。
 開啟攝影機或影片後，以滑鼠指定目標，逐幀更新追蹤框並顯示 FPS。
-支援灰階／HOG 特徵、多尺度估計，以及實驗性的背景去除。
+支援灰階／HOG 特徵、多尺度估計、色彩直方圖前景模型、信心門控與重新偵測，以及實驗性的背景去除。
 
 本專案源自 [uoip/KCFpy](https://github.com/uoip/KCFpy)，其實作來自
 [KCFcpp](https://github.com/joaofaro/KCFcpp)，演算法參考
 [High-Speed Tracking with Kernelized Correlation Filters](http://www.robots.ox.ac.uk/~joao/publications/henriques_tpami2015.pdf)。
 授權見 [LICENSE](LICENSE)。
+
+## 專案定位與優點
+
+本專案以傳統電腦視覺、特別是 **correlation filter** 為核心：追蹤器在第一幀以框選範例即時學習，
+之後以 FFT 在頻域完成相關運算，不需要預先訓練、資料集或模型權重。
+
+- **輕量、可攜**：執行依賴只有 NumPy、Numba、OpenCV，皆有 macOS、Linux（x86_64／aarch64）與 Windows x86_64 的 wheel；
+  不需要 GPU，也沒有需另行下載、授權待確認的模型檔。
+- **CPU 即時**：建議設定在 Apple M2 Pro 單一目標約 400 FPS，留有餘裕給解碼、顯示或多個追蹤器。
+- **可解釋、可調整**：每個步驟（HOG、色彩機率、相關響應、APCE 信心）都是可檢視的中間結果；
+  `tracker.state` 明確區分追蹤中、信心不足與遺失搜尋，方便上層程式決策。
+- **可量測**：附 VOT2016 離線基準（含 SiamRPN 範例的垃圾袋影片），每次修改可用相同指標比較準確度與速度。
+
+### 後續方向
+
+深度學習 Siamese 追蹤器（例如 OpenCV 內建的 NanoTrack、VitTrack）在同一基準上準確度更高，
+但需要模型權重、依賴 OpenCV DNN API 的版本變動，且部分權重授權未聲明。
+本版維持以 correlation filter 為主；Siamese 方法的評估結果保留在[基準測試說明](benchmarks/README.md)，
+作為下一代架構（例如以深度特徵或 Siamese 網路做重新偵測）的比較基礎。
 
 ## 環境與安裝
 
@@ -113,7 +132,8 @@ uv run --locked python -m kcf_tracker.foreground_filter ./input_image.jpg
 | `src/kcf_tracker/cli.py` | CLI、滑鼠選取狀態與影像迴圈 |
 | `src/kcf_tracker/tracker.py` | `KCFTracker.init(roi, image)`、`update(image)` 及模型更新 |
 | `src/kcf_tracker/fhog.py` | Numba 加速的 HOG 特徵計算 |
-| `src/kcf_tracker/fft.py` | OpenCV DFT 與複數運算 |
+| `src/kcf_tracker/fft.py` | 批次 `rfft2`／`irfft2` 與舊版 OpenCV DFT 輔助函式 |
+| `src/kcf_tracker/scale_filter.py` | fDSST 式尺度濾波器（`--scale-filter`） |
 | `src/kcf_tracker/recttool.py` | 區域裁切、邊界填補及背景遮罩整合 |
 | `src/kcf_tracker/color_model.py` | 色彩直方圖前景模型、軟權重與色彩響應 |
 | `src/kcf_tracker/debackground.py` | 色彩網格、背景連通與比較展示 |
@@ -121,9 +141,12 @@ uv run --locked python -m kcf_tracker.foreground_filter ./input_image.jpg
 | `src/kcf_tracker/utils.py` | 遮罩運算、距離與計時工具 |
 | `tests/` | 合成影像追蹤、特徵運算與 CLI 回歸測試 |
 | `samples/videos/` | 三部可直接載入的短片與來源／授權說明 |
+| `benchmarks/` | VOT2016 資料下載、OPE／reset 評估與結果說明 |
+| `docker/` | 多平台（linux/amd64、linux/arm64）測試映像與腳本 |
 
 `roi` 格式為 `[x, y, width, height]`。
 `update()` 信心不足時回傳 `[0, 0, 0, 0]`，保留最後模型，呼叫端應停止追蹤並等待重新 `init()`。
+啟用 `recovery=True` 時改為持續回傳最後位置並重新偵測，直到超過 `max_lost_frames`（預設不放棄）；狀態見 `tracker.state`。
 Python 呼叫端使用 `from kcf_tracker.tracker import KCFTracker`。
 原本從根目錄模組匯入的程式需改用 `kcf_tracker` 套件路徑；CLI 名稱不變。
 
@@ -152,7 +175,25 @@ hook 改檔後先檢視差異，再重新 stage 與提交；不要用 `--no-veri
 不要手動編輯 lock，或以 `--frozen` 隱藏宣告與 lock 不一致的問題。
 詳細檔案分工與 review 流程見 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
+### 以 Docker 在多平台測試
+
+`docker/Dockerfile` 建立無顯示器的 Linux 映像，依 `uv.lock` 安裝依賴，可在 amd64 與 arm64 上執行測試與基準。
+Windows 與 macOS 可透過 Docker Desktop 執行 Linux 容器；非原生架構以模擬執行，速度較慢。
+
+```sh
+docker build -f docker/Dockerfile -t kcf-python .
+docker run --rm kcf-python                              # 執行 pytest
+docker build -f docker/Dockerfile --platform linux/amd64 --build-arg PYTHON_VERSION=3.12 -t kcf-python:amd64-py312 .
+
+# 依序測試 linux/arm64、linux/amd64 × Python 3.11、3.12；可帶入 fetch_vot.py 的資料目錄做簡短基準
+docker/run-tests.sh benchmarks/data
+PLATFORMS=linux/amd64 PYTHONS=3.12 docker/run-tests.sh
+```
+
+容器沒有圖形介面，互動式 `kcf-track` 仍請在本機執行。
+
 ## 限制
 
-KCF 適合短期追蹤，沒有完整的遮擋恢復或自動重新偵測機制。
+KCF 適合短期追蹤。`--recovery` 提供信心門控與局部重新偵測，但搜尋範圍有限，目標離開畫面或長時間遮擋後未必能找回；
+快速移動且外觀持續變化的目標仍可能在信心尚高時漂移。
 合成影像測試通過不等於真實影片的精度或 FPS 已達特定標準；背景去除亦需依場景評估。

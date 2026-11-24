@@ -53,7 +53,7 @@ pedestrian1：原本因峰值低於門檻而永久遺失），28 部序列仍屬
 ## 平台驗證
 
 - macOS arm64：Python 3.11。
-- Linux aarch64、x86_64（Docker，x86_64 為模擬）：Python 3.11／3.12，`uv sync --locked`、Ruff、pytest
+- Linux aarch64、x86_64（`docker/run-tests.sh`，x86_64 為模擬）：Python 3.11／3.12，`uv sync --locked`、Ruff、pytest
   全數通過，基準測試可執行。不同 CPU 架構的浮點差異會使個別序列結果略有不同。
 - Windows x86_64：未實測；`uv.lock` 中 NumPy、Numba、llvmlite、OpenCV 皆有 `win_amd64` wheel。
   Windows on ARM 缺少 Numba 與 OpenCV wheel（既有限制）。
